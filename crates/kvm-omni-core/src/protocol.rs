@@ -98,6 +98,109 @@ pub struct HeartbeatPayload {
     pub sent_at_us: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OmniPacketRef<'a> {
+    pub flags: u8,
+    pub stream_id: u32,
+    pub sequence: u32,
+    pub timestamp_us: u64,
+    pub payload_type: PayloadType,
+    pub payload: &'a [u8],
+}
+
+impl<'a> OmniPacketRef<'a> {
+    #[inline]
+    pub fn encode_into(&self, buf: &mut Vec<u8>) {
+        encode_frame_into(
+            self.flags,
+            self.stream_id,
+            self.sequence,
+            self.timestamp_us,
+            self.payload_type,
+            self.payload,
+            buf,
+        );
+    }
+
+    #[inline]
+    pub fn deserialize(src: &'a [u8]) -> Result<Self, ProtocolError> {
+        if src.len() < MIN_PACKET_LEN {
+            return Err(ProtocolError::BufferTooShort(MIN_PACKET_LEN));
+        }
+        if src[0..2] != PROTOCOL_MAGIC {
+            return Err(ProtocolError::InvalidMagic);
+        }
+        if src[2] != PROTOCOL_VERSION {
+            return Err(ProtocolError::UnsupportedVersion(src[2]));
+        }
+
+        let flags = src[3];
+        let stream_id = u32::from_be_bytes(src[4..8].try_into().unwrap());
+        let sequence = u32::from_be_bytes(src[8..12].try_into().unwrap());
+        let timestamp_us = u64::from_be_bytes(src[12..20].try_into().unwrap());
+        let payload_type = PayloadType::try_from(src[20])?;
+        let payload_len = u16::from_be_bytes(src[21..23].try_into().unwrap()) as usize;
+
+        let total_len = HEADER_LEN + payload_len + TRAILER_LEN;
+        if src.len() < total_len {
+            return Err(ProtocolError::BufferTooShort(total_len));
+        }
+
+        let expected_crc =
+            u32::from_be_bytes(src[HEADER_LEN + payload_len..total_len].try_into().unwrap());
+        let actual_crc = crc32c::crc32c(&src[0..HEADER_LEN + payload_len]);
+        if expected_crc != actual_crc {
+            return Err(ProtocolError::InvalidChecksum);
+        }
+
+        Ok(Self {
+            flags,
+            stream_id,
+            sequence,
+            timestamp_us,
+            payload_type,
+            payload: &src[HEADER_LEN..HEADER_LEN + payload_len],
+        })
+    }
+
+    pub fn to_owned(&self) -> OmniPacket {
+        OmniPacket {
+            flags: self.flags,
+            stream_id: self.stream_id,
+            sequence: self.sequence,
+            timestamp_us: self.timestamp_us,
+            payload_type: self.payload_type,
+            payload: self.payload.to_vec(),
+        }
+    }
+}
+
+#[inline]
+pub fn encode_frame_into(
+    flags: u8,
+    stream_id: u32,
+    sequence: u32,
+    timestamp_us: u64,
+    payload_type: PayloadType,
+    payload: &[u8],
+    buf: &mut Vec<u8>,
+) {
+    buf.clear();
+    buf.reserve(MIN_PACKET_LEN + payload.len());
+    buf.extend_from_slice(&PROTOCOL_MAGIC);
+    buf.push(PROTOCOL_VERSION);
+    buf.push(flags);
+    buf.extend_from_slice(&stream_id.to_be_bytes());
+    buf.extend_from_slice(&sequence.to_be_bytes());
+    buf.extend_from_slice(&timestamp_us.to_be_bytes());
+    buf.push(payload_type as u8);
+    buf.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    buf.extend_from_slice(payload);
+
+    let crc = crc32c::crc32c(buf);
+    buf.extend_from_slice(&crc.to_be_bytes());
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmniPacket {
     pub flags: u8,
@@ -152,21 +255,17 @@ impl OmniPacket {
     }
 
     /// Encode directly into a caller-supplied buffer to avoid heap allocations on hot paths.
+    #[inline]
     pub fn encode_into(&self, buf: &mut Vec<u8>) {
-        buf.clear();
-        buf.reserve(MIN_PACKET_LEN + self.payload.len());
-        buf.extend_from_slice(&PROTOCOL_MAGIC);
-        buf.push(PROTOCOL_VERSION);
-        buf.push(self.flags);
-        buf.extend_from_slice(&self.stream_id.to_be_bytes());
-        buf.extend_from_slice(&self.sequence.to_be_bytes());
-        buf.extend_from_slice(&self.timestamp_us.to_be_bytes());
-        buf.push(self.payload_type as u8);
-        buf.extend_from_slice(&(self.payload.len() as u16).to_be_bytes());
-        buf.extend_from_slice(&self.payload);
-
-        let crc = crc32c::crc32c(buf);
-        buf.extend_from_slice(&crc.to_be_bytes());
+        encode_frame_into(
+            self.flags,
+            self.stream_id,
+            self.sequence,
+            self.timestamp_us,
+            self.payload_type,
+            &self.payload,
+            buf,
+        );
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -175,45 +274,9 @@ impl OmniPacket {
         buf
     }
 
+    #[inline]
     pub fn deserialize(src: &[u8]) -> Result<Self, ProtocolError> {
-        if src.len() < MIN_PACKET_LEN {
-            return Err(ProtocolError::BufferTooShort(MIN_PACKET_LEN));
-        }
-        if src[0..2] != PROTOCOL_MAGIC {
-            return Err(ProtocolError::InvalidMagic);
-        }
-        if src[2] != PROTOCOL_VERSION {
-            return Err(ProtocolError::UnsupportedVersion(src[2]));
-        }
-
-        let flags = src[3];
-        let stream_id = u32::from_be_bytes(src[4..8].try_into().unwrap());
-        let sequence = u32::from_be_bytes(src[8..12].try_into().unwrap());
-        let timestamp_us = u64::from_be_bytes(src[12..20].try_into().unwrap());
-        let payload_type = PayloadType::try_from(src[20])?;
-        let payload_len = u16::from_be_bytes(src[21..23].try_into().unwrap()) as usize;
-
-        let total_len = HEADER_LEN + payload_len + TRAILER_LEN;
-        if src.len() < total_len {
-            return Err(ProtocolError::BufferTooShort(total_len));
-        }
-
-        let expected_crc =
-            u32::from_be_bytes(src[HEADER_LEN + payload_len..total_len].try_into().unwrap());
-        let actual_crc = crc32c::crc32c(&src[0..HEADER_LEN + payload_len]);
-        if expected_crc != actual_crc {
-            return Err(ProtocolError::InvalidChecksum);
-        }
-
-        let payload = src[HEADER_LEN..HEADER_LEN + payload_len].to_vec();
-        Ok(Self {
-            flags,
-            stream_id,
-            sequence,
-            timestamp_us,
-            payload_type,
-            payload,
-        })
+        Ok(OmniPacketRef::deserialize(src)?.to_owned())
     }
 }
 
@@ -267,10 +330,11 @@ mod tests {
         let start = Instant::now();
         for _ in 0..1_000_000 {
             pkt.encode_into(&mut buf);
-            let parsed = OmniPacket::deserialize(&buf).unwrap();
+            let parsed = OmniPacketRef::deserialize(&buf).unwrap();
             std::hint::black_box(parsed);
         }
         let elapsed = start.elapsed();
+        println!("1M zero-copy roundtrips took {:?}", elapsed);
         assert!(
             elapsed.as_secs_f64() < 5.0,
             "1M roundtrips took {:?}",
