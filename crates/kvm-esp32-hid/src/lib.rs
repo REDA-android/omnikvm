@@ -54,6 +54,7 @@ pub fn decode_esp_frame(raw: &[u8]) -> Result<(u8, Vec<u8>), Esp32Error> {
     Ok((cmd, raw[4..4 + len].to_vec()))
 }
 
+#[cfg(test)]
 extern "C" {
     fn omnikvm_esp_dispatch_frame(buf: *const u8, len: usize) -> i32;
 }
