@@ -55,6 +55,8 @@ pub struct ScreenTopology {
     pub hysteresis_px: i32,
     /// Dead-zone margin at corners (pixels) where edge switching is suppressed.
     pub corner_dead_zone_px: i32,
+    /// When true, cursor is locked to the active screen (e.g. fullscreen/gaming mode).
+    pub cursor_locked: bool,
 }
 
 impl Default for ScreenTopology {
@@ -69,7 +71,12 @@ impl ScreenTopology {
             screens: HashMap::new(),
             hysteresis_px,
             corner_dead_zone_px,
+            cursor_locked: false,
         }
+    }
+
+    pub fn set_cursor_locked(&mut self, locked: bool) {
+        self.cursor_locked = locked;
     }
 
     pub fn add_screen(&mut self, rect: ScreenRect) {
@@ -83,6 +90,9 @@ impl ScreenTopology {
     /// Given a cursor move from `active_id` to global virtual coordinates `(vx, vy)`,
     /// determine whether the cursor crossed into a neighboring screen.
     pub fn evaluate_move(&self, active_id: &str, vx: i32, vy: i32) -> Option<SwitchTransition> {
+        if self.cursor_locked {
+            return None;
+        }
         let current = self.screens.get(active_id)?;
         if current.contains(vx, vy) {
             return None;
@@ -258,5 +268,16 @@ mod tests {
         t5.add_screen(rect("high", 0, 0, 1920, 1080, 1.0));
         t5.add_screen(rect("low", 1920, 2000, 1920, 1080, 1.0));
         assert!(t5.evaluate_move("high", 1930, 500).is_none());
+    }
+
+    #[test]
+    fn cursor_lock_prevents_switching() {
+        let mut t = ScreenTopology::default();
+        t.add_screen(rect("a", 0, 0, 1920, 1080, 1.0));
+        t.add_screen(rect("b", 1920, 0, 1920, 1080, 1.0));
+        t.set_cursor_locked(true);
+        assert!(t.evaluate_move("a", 1930, 500).is_none());
+        t.set_cursor_locked(false);
+        assert_eq!(t.evaluate_move("a", 1930, 500).unwrap().target_screen, "b");
     }
 }
