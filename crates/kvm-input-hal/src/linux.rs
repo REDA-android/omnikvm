@@ -1,6 +1,7 @@
 use crate::{HalError, InputEvent, SystemInputInjector};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::path::Path;
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +18,44 @@ pub fn detect_session_backend() -> LinuxSessionBackend {
         LinuxSessionBackend::X11XTest
     } else {
         LinuxSessionBackend::UinputKernel
+    }
+}
+
+/// Linux `uinput` ioctl request numbers (x86_64/aarch64 `linux/uinput.h`).
+pub mod uinput_ioctl {
+    pub const UI_DEV_CREATE: u64 = 0x5501;
+    pub const UI_DEV_DESTROY: u64 = 0x5502;
+    pub const UI_SET_EVBIT: u64 = 0x4004_5564;
+    pub const UI_SET_KEYBIT: u64 = 0x4004_5565;
+    pub const UI_SET_RELBIT: u64 = 0x4004_5566;
+    pub const UI_DEV_SETUP: u64 = 0x405c_5503;
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct UinputSetup {
+    pub bustype: u16,
+    pub vendor: u16,
+    pub product: u16,
+    pub version: u16,
+    pub name: [u8; 80],
+    pub ff_effects_max: u32,
+}
+
+impl UinputSetup {
+    pub fn omnikvm_virtual(name: &str) -> Self {
+        let mut buf = [0u8; 80];
+        let bytes = name.as_bytes();
+        let n = bytes.len().min(79);
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Self {
+            bustype: 0x06, // BUS_VIRTUAL
+            vendor: 0x4F4B,
+            product: 0x0001,
+            version: 1,
+            name: buf,
+            ff_effects_max: 0,
+        }
     }
 }
 
@@ -59,10 +98,14 @@ pub struct UinputDevice {
 
 impl UinputDevice {
     pub fn open_default() -> Result<Self, HalError> {
+        Self::open_path(Path::new("/dev/uinput"))
+    }
+
+    pub fn open_path(path: &Path) -> Result<Self, HalError> {
         let file = OpenOptions::new()
             .write(true)
-            .open("/dev/uinput")
-            .map_err(|e| HalError::DeviceOpen(format!("/dev/uinput: {e}")))?;
+            .open(path)
+            .map_err(|e| HalError::DeviceOpen(format!("{}: {e}", path.display())))?;
         Ok(Self {
             file: Mutex::new(file),
         })
@@ -115,5 +158,29 @@ impl SystemInputInjector for UinputDevice {
                 "absolute uinput requires ABS_X/ABS_Y setup",
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uinput_writes_valid_evdev_frames_to_sink() {
+        let tmp = std::env::temp_dir().join("omnikvm_uinput_test.bin");
+        let _ = File::create(&tmp).unwrap();
+        let dev = UinputDevice::open_path(&tmp).unwrap();
+        dev.inject(InputEvent::MouseMove { dx: 12, dy: -4 }).unwrap();
+        dev.inject(InputEvent::Key {
+            keycode: 30,
+            pressed: true,
+        })
+        .unwrap();
+        let bytes = std::fs::read(&tmp).unwrap();
+        let _ = std::fs::remove_file(&tmp);
+        // MouseMove (REL_X, REL_Y, SYN) = 3 * 24 bytes; Key (EV_KEY, SYN) = 2 * 24 bytes => 120 bytes
+        assert_eq!(bytes.len(), 120);
+        let setup = UinputSetup::omnikvm_virtual("OmniKVM Virtual Mouse");
+        assert_eq!(setup.vendor, 0x4F4B);
     }
 }
