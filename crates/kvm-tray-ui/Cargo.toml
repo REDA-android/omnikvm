@@ -1,0 +1,10 @@
+[package]
+name = "kvm-tray-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+kvm-omni-core = { path = "../kvm-omni-core" }
+qrcode.workspace = true

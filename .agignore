@@ -1,0 +1,10 @@
+# Configuration .agignore - Exclusions strictes pour Antigravity
+/vendor_refs/**/target
+/vendor_refs/**/node_modules
+/vendor_refs/**/.git
+/vendor_refs/**/build
+/target
+/*.bin
+/*.iso
+/*.tar.gz
+/**/tests/fixtures/large_files

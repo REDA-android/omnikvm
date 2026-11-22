@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OmniKVM Control Plane — Hybrid Multi-OS KVM</title>
+  <meta name="description" content="Configure OmniKVM screen topology, monitor QUIC/WebRTC failover latency, and pair devices via SPAKE2+ QR code." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">OK</span>
+      <div>
+        <h1>OmniKVM Control Plane</h1>
+        <p class="subtitle">Zero-Cost Offline Hybrid Software KVM</p>
+      </div>
+    </div>
+    <div class="status-pill" id="transport-status">
+      <span class="dot"></span>
+      <span>QUIC LAN Active &middot; 0.38 ms</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel topology-panel">
+      <div class="panel-head">
+        <h2>Virtual Screen Topology</h2>
+        <button id="reset-layout-btn" type="button" class="btn">Reset Layout</button>
+      </div>
+      <div id="topology-stage" class="topology-stage" role="region" aria-label="Interactive monitor layout"></div>
+      <p class="hint" id="topology-readout">Click a screen to inspect DPI scale and edge boundaries.</p>
+    </section>
+
+    <aside class="sidebar">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>SPAKE2+ QR Pairing</h2>
+          <button id="regen-pin-btn" type="button" class="btn btn-primary">New PIN</button>
+        </div>
+        <div class="pairing-box">
+          <div id="qr-container" class="qr-container" aria-label="Pairing QR"></div>
+          <div class="pairing-meta">
+            <span class="label">One-Time PIN</span>
+            <strong id="pairing-pin" class="pin">482 910</strong>
+            <code id="pairing-uri" class="uri">omnikvm://pair?id=host-1&amp;port=4433</code>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Transport Failover</h2>
+        </div>
+        <ul class="transport-list">
+          <li><span>Primary: QUIC (quinn)</span><span class="badge ok">0.38 ms</span></li>
+          <li><span>Fallback: WebRTC DataChannel</span><span class="badge">Standby</span></li>
+          <li><span>Mobile: BLE HID / scrcpy</span><span class="badge">Ready</span></li>
+          <li><span>Dongle: ESP32-S3 (esparrier)</span><span class="badge">USB-CDC</span></li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
