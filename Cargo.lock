@@ -619,6 +619,7 @@ dependencies = [
 name = "kvm-esp32-hid"
 version = "1.0.0"
 dependencies = [
+ "cc",
  "crc32c",
  "thiserror 1.0.69",
 ]

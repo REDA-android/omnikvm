@@ -54,15 +54,22 @@ pub fn decode_esp_frame(raw: &[u8]) -> Result<(u8, Vec<u8>), Esp32Error> {
     Ok((cmd, raw[4..4 + len].to_vec()))
 }
 
+extern "C" {
+    fn omnikvm_esp_dispatch_frame(buf: *const u8, len: usize) -> i32;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn esp32_frame_roundtrip() {
+    fn esp32_frame_roundtrip_and_c_dispatch() {
         let frame = encode_esp_frame(EspHidCommand::MouseRel, &[0x01, 0x0A, 0xFE, 0x00]);
         let (cmd, payload) = decode_esp_frame(&frame).unwrap();
         assert_eq!(cmd, EspHidCommand::MouseRel as u8);
         assert_eq!(payload, vec![0x01, 0x0A, 0xFE, 0x00]);
+
+        let rc = unsafe { omnikvm_esp_dispatch_frame(frame.as_ptr(), frame.len()) };
+        assert_eq!(rc, 0);
     }
 }
