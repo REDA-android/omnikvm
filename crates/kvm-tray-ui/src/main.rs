@@ -1,6 +1,8 @@
+use kvm_discovery_mdns::{PeerAnnouncement, SERVICE_TYPE};
 use kvm_omni_core::crypto::{build_pairing_uri, generate_pairing_pin};
 use qrcode::render::svg;
 use qrcode::QrCode;
+use serde_json::json;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
@@ -15,6 +17,28 @@ pub fn render_pairing_qr_svg(uri: &str) -> String {
         .build()
 }
 
+pub fn build_pairing_json() -> String {
+    let pin = generate_pairing_pin();
+    let uri = build_pairing_uri("omnikvm-tray", "127.0.0.1", 4433, &pin);
+    let svg = render_pairing_qr_svg(&uri);
+    json!({
+        "pin": pin,
+        "uri": uri,
+        "qr_svg": svg,
+        "service": SERVICE_TYPE
+    })
+    .to_string()
+}
+
+pub fn build_peers_json() -> String {
+    let local = PeerAnnouncement::new("omnikvm-tray", "localhost", 4433, 4434, "tofu-local");
+    json!({
+        "service": SERVICE_TYPE,
+        "local": local
+    })
+    .to_string()
+}
+
 fn http_response(content_type: &str, body: &str) -> String {
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {content_type}; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -24,7 +48,7 @@ fn http_response(content_type: &str, body: &str) -> String {
 
 fn serve_control_ui(bind_addr: &str) -> std::io::Result<()> {
     let listener = TcpListener::bind(bind_addr)?;
-    println!("OmniKVM Web Control UI listening on http://{bind_addr}");
+    println!("OmniKVM Tray Control UI listening on http://{bind_addr}");
     for stream in listener.incoming() {
         let mut stream = match stream {
             Ok(s) => s,
@@ -42,6 +66,8 @@ fn serve_control_ui(bind_addr: &str) -> std::io::Result<()> {
         let resp = match path {
             "/styles.css" => http_response("text/css", STYLES_CSS),
             "/app.js" => http_response("application/javascript", APP_JS),
+            "/api/pairing" => http_response("application/json", &build_pairing_json()),
+            "/api/peers" => http_response("application/json", &build_peers_json()),
             _ => http_response("text/html", INDEX_HTML),
         };
         let _ = stream.write_all(resp.as_bytes());
@@ -58,11 +84,7 @@ fn main() {
             std::process::exit(1);
         }
     } else {
-        let pin = generate_pairing_pin();
-        let uri = build_pairing_uri("omnikvm-tray", "127.0.0.1", 4433, &pin);
-        let svg = render_pairing_qr_svg(&uri);
-        println!("Pairing URI: {uri}");
-        println!("QR SVG length: {} bytes", svg.len());
+        println!("{}", build_pairing_json());
     }
 }
 
@@ -77,5 +99,27 @@ mod tests {
         assert!(INDEX_HTML.contains("OmniKVM Control Plane"));
         assert!(STYLES_CSS.contains("--accent"));
         assert!(APP_JS.contains("topology-stage"));
+        let pairing = build_pairing_json();
+        assert!(pairing.contains("omnikvm://pair"));
+        let peers = build_peers_json();
+        assert!(peers.contains("_omnikvm._udp.local."));
+    }
+
+    #[test]
+    fn memory_footprint_under_15mb() {
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            if let Some(rss_kb) = status
+                .lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|v| v.parse::<usize>().ok())
+            {
+                assert!(
+                    rss_kb < 15 * 1024,
+                    "RSS too high: {} KB (limit 15360 KB)",
+                    rss_kb
+                );
+            }
+        }
     }
 }
