@@ -1,6 +1,7 @@
 mod daemon;
 #[allow(dead_code)]
 mod router;
+mod transfer;
 
 use clap::{Parser, Subcommand};
 use kvm_input_hal::linux::{detect_session_backend, UinputDevice};
@@ -60,6 +61,20 @@ enum Commands {
         x: i32,
         #[arg(long)]
         y: i32,
+    },
+    /// Send a file over QUIC using 64 KB Blake3-XOF encrypted chunks
+    SendFile {
+        #[arg(long)]
+        peer: SocketAddr,
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+    /// Receive an encrypted QUIC file transfer and verify its Blake3 digest
+    RecvFile {
+        #[arg(long, default_value = "0.0.0.0:4435")]
+        bind: SocketAddr,
+        #[arg(long)]
+        out: std::path::PathBuf,
     },
 }
 
@@ -150,6 +165,16 @@ async fn main() -> anyhow::Result<()> {
                 ),
                 None => println!("No screen switch at ({x}, {y})"),
             }
+        }
+        Commands::SendFile { peer, file } => {
+            let digest = transfer::send_file_quic(peer, &file, [0x42u8; 32]).await?;
+            println!("File sent & Blake3 verified: {:02x?}", &digest[..8]);
+        }
+        Commands::RecvFile { bind, out } => {
+            let (addr, handle) = transfer::recv_file_quic(bind, &out, [0x42u8; 32]).await?;
+            println!("Listening for encrypted QUIC file transfer on {addr}...");
+            let digest = handle.await??;
+            println!("Received & Blake3 verified: {:02x?}", &digest[..8]);
         }
     }
     Ok(())

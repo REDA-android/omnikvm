@@ -12,6 +12,7 @@ kvm-transport-quic = { path = "../kvm-transport-quic" }
 kvm-transport-webrtc = { path = "../kvm-transport-webrtc" }
 kvm-clipboard-sync = { path = "../kvm-clipboard-sync" }
 clap.workspace = true
+bincode.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 tracing-subscriber.workspace = true

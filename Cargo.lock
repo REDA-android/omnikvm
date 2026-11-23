@@ -735,6 +735,7 @@ name = "kvm-cli"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "clap",
  "kvm-clipboard-sync",
  "kvm-input-hal",
@@ -800,6 +801,7 @@ dependencies = [
  "hmac",
  "rand 0.8.8",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror 1.0.69",
 ]
