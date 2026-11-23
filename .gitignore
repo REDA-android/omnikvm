@@ -1,4 +1,5 @@
 /target
+/tauri-app/target
 /vendor_refs
 /dist
 **/*.rs.bk
