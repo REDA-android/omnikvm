@@ -11,8 +11,8 @@ use axum::{Json, Router};
 use kvm_clipboard_sync::envelope::ClipboardEnvelope;
 use kvm_clipboard_sync::osc52::encode_osc52;
 use kvm_discovery_mdns::{
-    bind_multicast_listener, recv_announcement, PeerAnnouncement, PeerRegistry, DEFAULT_DISCOVERY_PORT,
-    SERVICE_TYPE,
+    bind_multicast_listener, broadcast_announcement, detect_hostname, detect_local_ipv4,
+    recv_announcement, PeerAnnouncement, PeerRegistry, DEFAULT_DISCOVERY_PORT, SERVICE_TYPE,
 };
 use kvm_input_hal::ddc::{build_input_switch_frame, MonitorInputSource, VCP_INPUT_SOURCE};
 use kvm_input_hal::ddc_i2c::{list_i2c_buses, set_vcp};
@@ -21,7 +21,7 @@ use kvm_omni_core::protocol::{flags, MouseMoveDeltaPayload, OmniPacket, PayloadT
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio_stream::wrappers::IntervalStream;
@@ -29,15 +29,53 @@ use tokio_stream::StreamExt;
 
 const PEER_TTL: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct LiveState {
+    pub local_peer_id: String,
+    pub hostname: String,
+    pub local_ip: String,
+    pub quic_port: Arc<AtomicU16>,
     pub registry: Arc<RwLock<PeerRegistry>>,
     pub cursor_lock: Arc<AtomicBool>,
     clip_seq: Arc<AtomicU64>,
 }
 
-/// Listens for OmniKVM beacons (Rust or `omnikvm-mdns-go`) and prunes stale peers.
+impl Default for LiveState {
+    fn default() -> Self {
+        let hostname = detect_hostname();
+        let local_ip = detect_local_ipv4();
+        let local_peer_id = format!("{}-{:04x}", hostname, std::process::id() & 0xFFFF);
+        Self {
+            local_peer_id,
+            hostname,
+            local_ip,
+            quic_port: Arc::new(AtomicU16::new(4433)),
+            registry: Arc::new(RwLock::new(PeerRegistry::default())),
+            cursor_lock: Arc::new(AtomicBool::new(false)),
+            clip_seq: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+/// Broadcasts our LAN beacon every 2.5 s AND listens for remote OmniKVM peers.
 pub fn spawn_discovery(state: LiveState, port: u16) {
+    let beacon_state = state.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(2500));
+        loop {
+            tick.tick().await;
+            let qport = beacon_state.quic_port.load(Ordering::Relaxed);
+            let ann = PeerAnnouncement::new(
+                &beacon_state.local_peer_id,
+                &beacon_state.hostname,
+                qport,
+                qport.saturating_add(1),
+                "tofu-lan",
+            );
+            let _ = broadcast_announcement(&ann, port).await;
+        }
+    });
+
     tokio::spawn(async move {
         let sock = match bind_multicast_listener(port).await {
             Ok(s) => s,
@@ -51,7 +89,9 @@ pub fn spawn_discovery(state: LiveState, port: u16) {
             tokio::select! {
                 res = recv_announcement(&sock) => {
                     if let Ok((ann, addr)) = res {
-                        state.registry.write().unwrap().upsert(ann, addr);
+                        if ann.peer_id != state.local_peer_id {
+                            state.registry.write().unwrap().upsert(ann, addr);
+                        }
                     }
                 }
                 _ = prune.tick() => state.registry.write().unwrap().prune_stale(PEER_TTL),
@@ -85,7 +125,8 @@ pub fn measure_pipeline_us(sealer: &mut DatagramSealer, opener: &mut DatagramOpe
 }
 
 async fn get_peers(State(s): State<LiveState>) -> impl IntoResponse {
-    let local = PeerAnnouncement::new("omnikvm-tray", "localhost", 4433, 4434, "tofu-local");
+    let qport = s.quic_port.load(Ordering::Relaxed);
+    let local = PeerAnnouncement::new(&s.local_peer_id, &s.hostname, qport, qport.saturating_add(1), "tofu-lan");
     let discovered: Vec<_> = s
         .registry
         .read()
@@ -103,7 +144,12 @@ async fn get_peers(State(s): State<LiveState>) -> impl IntoResponse {
             })
         })
         .collect();
-    Json(json!({ "service": SERVICE_TYPE, "local": local, "discovered": discovered }))
+    Json(json!({
+        "service": SERVICE_TYPE,
+        "local_ip": s.local_ip,
+        "local": local,
+        "discovered": discovered
+    }))
 }
 
 #[derive(Deserialize)]

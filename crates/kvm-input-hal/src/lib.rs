@@ -1,10 +1,13 @@
 pub mod ddc;
 pub mod ddc_i2c;
+pub mod edge_kvm;
 pub mod linux;
 pub mod linux_capture;
 pub mod macos;
 pub mod mock;
 pub mod wayland;
+pub mod win_clipboard;
+pub mod win_keymap;
 pub mod windows;
 pub mod x11;
 

@@ -987,6 +987,7 @@ name = "kvm-tray-ui"
 version = "1.0.0"
 dependencies = [
  "axum",
+ "bincode",
  "blake3",
  "kvm-clipboard-sync",
  "kvm-discovery-mdns",

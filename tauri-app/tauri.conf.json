@@ -7,14 +7,7 @@
     "frontendDist": "../web"
   },
   "app": {
-    "windows": [
-      {
-        "title": "OmniKVM Control Plane",
-        "width": 1100,
-        "height": 740,
-        "resizable": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

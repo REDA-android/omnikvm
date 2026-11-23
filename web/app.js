@@ -10,37 +10,50 @@ const statusText = document.getElementById("status-text");
 const sessionDot = document.getElementById("session-dot");
 const sessionBanner = document.getElementById("session-banner");
 const stopBtn = document.getElementById("stop-session-btn");
+const toggleRemoteBtn = document.getElementById("toggle-remote-btn");
+const syncClipBtn = document.getElementById("sync-clip-btn");
 const testMoveBtn = document.getElementById("test-move-btn");
 const rttBadge = document.getElementById("rtt-badge");
 const chartEl = document.getElementById("latency-chart");
 const lockBtn = document.getElementById("lock-cursor-btn");
+const localIpHint = document.getElementById("local-ip-hint");
 
 function renderSession(s) {
-  stopBtn.hidden = s.mode === "idle";
+  const active = s.mode !== "idle";
+  stopBtn.hidden = !active;
+  syncClipBtn.hidden = !active;
+  toggleRemoteBtn.hidden = s.mode !== "client";
   testMoveBtn.disabled = s.mode !== "client";
-  sessionDot.classList.toggle("live", s.mode !== "idle");
+  sessionDot.classList.toggle("live", active);
 
   if (s.mode === "host") {
-    statusText.textContent = `Serveur actif · ${s.bind_addr}`;
+    const addr = s.lan_addr || s.bind_addr;
+    statusText.textContent = `Réception active · ${addr}`;
     sessionBanner.className = "session-banner ok";
-    sessionBanner.textContent = `Ce PC partage son écran sur ${s.bind_addr} · PIN: ${s.pin} · ${s.events_received} événement(s) reçu(s)`;
+    sessionBanner.textContent =
+      `Ce PC attend/reçoit sur ${addr} · Code PIN : ${s.pin} · ` +
+      `${s.events_received} action(s) reçue(s) · ${s.clips_synced} presse-papiers sync`;
   } else if (s.mode === "client") {
-    statusText.textContent = `Connecté à ${s.peer_addr}`;
+    const where = s.remote_active ? "SUR LE PC DISTANT" : "Sur ce PC (glissez au bord pour passer)";
+    toggleRemoteBtn.textContent = s.remote_active ? "Revenir sur ce PC" : "Basculer vers PC distant";
+    statusText.textContent = `${where} · ${s.peer_addr}`;
     sessionBanner.className = "session-banner ok";
-    sessionBanner.textContent = `Contrôle actif vers ${s.peer_addr} · ${s.events_sent} événement(s) envoyé(s) (Ctrl+Alt+Esc pour libérer)`;
+    sessionBanner.textContent =
+      `Connecté à ${s.peer_addr} (bord: ${s.edge}) · État: ${where} · ` +
+      `${s.events_sent} action(s) envoyée(s) · ${s.clips_synced} presse-papiers sync · Ctrl+Alt+Esc = revenir`;
   } else {
     statusText.textContent = "Inactif";
     sessionBanner.className = s.last_error ? "session-banner err" : "session-banner";
     sessionBanner.textContent = s.last_error
       ? `Erreur : ${s.last_error}`
-      : "Aucune session active. Choisissez « Partager ce PC » ou « Connecter & Contrôler ».";
+      : "Aucune session active. Cliquez sur « Partager ce PC » (PC cible) ou « Connecter & Activer » (PC maître).";
   }
 }
 
 async function pollSession() {
   try {
     const res = await fetch("/api/session");
-    renderSession(await res.json());
+    if (res.ok) renderSession(await res.json());
   } catch (_) {}
 }
 
@@ -65,12 +78,13 @@ document.getElementById("start-host-btn").addEventListener("click", async () => 
 document.getElementById("start-client-btn").addEventListener("click", async () => {
   const peer = document.getElementById("client-peer").value.trim();
   const pin = document.getElementById("client-pin").value.trim();
+  const edge = document.getElementById("client-edge").value;
   sessionBanner.className = "session-banner";
-  sessionBanner.textContent = `Connexion QUIC vers ${peer}…`;
+  sessionBanner.textContent = `Connexion QUIC chiffrée vers ${peer}…`;
   const res = await fetch("/api/session/start-client", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ peer, pin, capture: true }),
+    body: JSON.stringify({ peer, pin, edge, capture: true }),
   });
   const d = await res.json();
   if (d.ok) {
@@ -78,6 +92,27 @@ document.getElementById("start-client-btn").addEventListener("click", async () =
   } else {
     sessionBanner.className = "session-banner err";
     sessionBanner.textContent = `Erreur : ${d.error}`;
+  }
+});
+
+toggleRemoteBtn.addEventListener("click", async () => {
+  const res = await fetch("/api/session/toggle-remote", { method: "POST" });
+  const d = await res.json();
+  if (d.ok) renderSession(d.session);
+});
+
+syncClipBtn.addEventListener("click", async () => {
+  const res = await fetch("/api/session/send-clipboard", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const d = await res.json();
+  if (d.ok) {
+    renderSession(d.session);
+  } else {
+    sessionBanner.className = "session-banner err";
+    sessionBanner.textContent = `Presse-papiers : ${d.error}`;
   }
 });
 
@@ -191,17 +226,19 @@ async function loadHealthAndPeers() {
     const [hRes, pRes] = await Promise.all([fetch("/api/health"), fetch("/api/peers")]);
     const health = await hRes.json();
     const peers = await pRes.json();
+    const port = document.getElementById("host-port").value || "4433";
+    localIpHint.innerHTML = `Adresse réseau de ce PC : <strong>${peers.local_ip}:${port}</strong> (${health.hostname})`;
     const mb = health.rss_kb ? `${(health.rss_kb / 1024).toFixed(1)} Mo` : health.os;
     document.getElementById("health-rss").textContent = `${health.os} · ${mb}`;
     document.getElementById("peers-readout").textContent = peers.discovered.length
-      ? `${peers.discovered.length} PC trouvé(s) (cliquez pour remplir l'IP) :`
-      : "Aucun autre PC détecté automatiquement (entrez l'IP manuellement).";
+      ? `${peers.discovered.length} PC trouvé(s) sur votre réseau (cliquez pour remplir l'IP) :`
+      : `Ce PC (${peers.local_ip}) est visible sur le réseau. Ouvrez OmniKVM sur un 2e PC pour le voir apparaître ici.`;
     const list = document.getElementById("peers-list");
     list.replaceChildren(
       ...peers.discovered.map((p) => {
         const li = document.createElement("li");
         const ip = p.addr.split(":")[0];
-        li.innerHTML = `<span>${p.peer_id} (${p.os})</span><span class="badge ok">${ip}:${p.quic_port}</span>`;
+        li.innerHTML = `<span><strong>${p.hostname}</strong> (${p.os})</span><span class="badge ok">${ip}:${p.quic_port}</span>`;
         li.addEventListener("click", () => {
           document.getElementById("client-peer").value = `${ip}:${p.quic_port}`;
         });
@@ -232,4 +269,4 @@ loadPairing();
 loadHealthAndPeers();
 pollSession();
 connectSse();
-setInterval(() => { loadHealthAndPeers(); pollSession(); }, 2500);
+setInterval(() => { loadHealthAndPeers(); pollSession(); }, 1500);

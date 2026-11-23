@@ -121,6 +121,60 @@ pub async fn recv_announcement(
     Ok((announcement, addr))
 }
 
+/// Purely offline routing-table lookup of this machine's primary LAN IPv4 address.
+pub fn detect_local_ipv4() -> String {
+    for probe in ["192.168.1.1:80", "10.255.255.255:80", "8.8.8.8:80"] {
+        if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            if sock.connect(probe).is_ok() {
+                if let Ok(addr) = sock.local_addr() {
+                    let ip = addr.ip();
+                    if !ip.is_loopback() && !ip.is_unspecified() {
+                        return ip.to_string();
+                    }
+                }
+            }
+        }
+    }
+    "127.0.0.1".to_string()
+}
+
+/// Detects the machine hostname across Windows (`COMPUTERNAME`) and Unix (`HOSTNAME` / `/etc/hostname`).
+pub fn detect_hostname() -> String {
+    for var in ["COMPUTERNAME", "HOSTNAME"] {
+        if let Ok(v) = std::env::var(var) {
+            let t = v.trim();
+            if !t.is_empty() {
+                return t.to_string();
+            }
+        }
+    }
+    if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
+        let t = h.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    "omnikvm-pc".to_string()
+}
+
+/// Broadcasts `announcement` to both IPv4 subnet broadcast (`255.255.255.255`) and
+/// mDNS multicast (`224.0.0.251`) so peers on Wi-Fi/Ethernet discover us automatically.
+pub async fn broadcast_announcement(
+    announcement: &PeerAnnouncement,
+    port: u16,
+) -> Result<(), DiscoveryError> {
+    let sock = UdpSocket::bind("0.0.0.0:0").await?;
+    let _ = sock.set_broadcast(true);
+    let payload = serde_json::to_vec(announcement)?;
+    let _ = sock
+        .send_to(&payload, SocketAddr::from(([255, 255, 255, 255], port)))
+        .await;
+    let _ = sock
+        .send_to(&payload, SocketAddr::from((MDNS_MULTICAST_V4, port)))
+        .await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

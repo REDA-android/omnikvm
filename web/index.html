@@ -12,7 +12,7 @@
       <span class="brand-mark" aria-hidden="true">OK</span>
       <div>
         <h1>OmniKVM Control Plane</h1>
-        <p class="subtitle">KVM logiciel chiffré QUIC · Zéro cloud</p>
+        <p class="subtitle">KVM logiciel chiffré QUIC · Passage bord d'écran &amp; Presse-papiers auto</p>
       </div>
     </div>
     <div class="status-pill" id="session-pill">
@@ -25,18 +25,22 @@
     <div class="main-col">
       <section class="panel">
         <div class="panel-head">
-          <h2>Connexion KVM (Réelle)</h2>
-          <button id="stop-session-btn" type="button" class="btn btn-danger" hidden>Arrêter la session</button>
+          <h2>Connexion entre vos PC</h2>
+          <div class="btn-group">
+            <button id="toggle-remote-btn" type="button" class="btn" hidden>Basculer vers PC distant</button>
+            <button id="sync-clip-btn" type="button" class="btn" hidden>Envoyer presse-papiers</button>
+            <button id="stop-session-btn" type="button" class="btn btn-danger" hidden>Arrêter la session</button>
+          </div>
         </div>
         <div class="kvm-grid">
           <div class="kvm-card">
-            <h3>1. Recevoir sur ce PC (Contrôlé)</h3>
-            <p class="hint">Lance le serveur QUIC chiffré avec injection souris/clavier native.</p>
+            <h3>1. Recevoir sur ce PC (PC contrôlé)</h3>
+            <p class="hint" id="local-ip-hint">Adresse réseau de ce PC : détection&hellip;</p>
             <div class="form-row">
               <label>Port UDP
                 <input id="host-port" class="field" type="number" value="4433" min="1024" max="65535" />
               </label>
-              <label>PIN (6 chiffres)
+              <label>Code PIN (6 chiffres)
                 <input id="host-pin" class="field" type="text" placeholder="Auto" maxlength="12" />
               </label>
             </div>
@@ -46,23 +50,32 @@
           </div>
 
           <div class="kvm-card">
-            <h3>2. Contrôler un autre PC</h3>
-            <p class="hint">Capture souris &amp; clavier (<code>Ctrl+Alt+Esc</code> pour libérer, <code>Ctrl+Alt+L</code> lock).</p>
+            <h3>2. Contrôler un autre PC (PC maître)</h3>
+            <p class="hint">Glissez la souris au bord choisi pour passer sur l'autre PC (<code>Ctrl+Alt+Esc</code> revient ici).</p>
             <div class="form-row">
               <label>IP:Port du PC cible
                 <input id="client-peer" class="field" type="text" placeholder="192.168.1.20:4433" />
               </label>
-              <label>PIN du PC cible
+              <label>Code PIN du PC cible
                 <input id="client-pin" class="field" type="text" placeholder="482910" maxlength="12" />
               </label>
             </div>
+            <label style="font-size:0.78rem;color:var(--muted);font-weight:500;">Position de l'autre PC (passage souris)
+              <select id="client-edge" class="field">
+                <option value="right">À droite de cet écran (Bord droit &rarr;)</option>
+                <option value="left">À gauche de cet écran (&larr; Bord gauche)</option>
+                <option value="top">Au-dessus de cet écran (&uarr; Bord haut)</option>
+                <option value="bottom">En-dessous de cet écran (&darr; Bord bas)</option>
+                <option value="immediate">Contrôle direct immédiat (test 1 PC)</option>
+              </select>
+            </label>
             <div class="btn-group">
-              <button id="start-client-btn" type="button" class="btn btn-primary">Connecter &amp; Contrôler</button>
+              <button id="start-client-btn" type="button" class="btn btn-primary">Connecter &amp; Activer</button>
               <button id="test-move-btn" type="button" class="btn" disabled>Tester souris (+40px)</button>
             </div>
           </div>
         </div>
-        <p class="session-banner" id="session-banner">Aucune session active. Choisissez un mode ci-dessus.</p>
+        <p class="session-banner" id="session-banner">Aucune session active. Cliquez sur « Partager ce PC » sur le PC secondaire, puis « Connecter &amp; Activer » sur votre PC principal.</p>
       </section>
 
       <section class="panel topology-panel">
@@ -75,11 +88,20 @@
           </div>
         </div>
         <div id="topology-stage" class="topology-stage" role="region" aria-label="Disposition des écrans"></div>
-        <p class="hint" id="topology-readout">Glissez les écrans pour reproduire votre bureau réel.</p>
+        <p class="hint" id="topology-readout">Glissez les écrans pour reproduire votre bureau réel (`Ctrl+Alt+L` verrouille le curseur sur l'écran actif).</p>
       </section>
     </div>
 
     <aside class="sidebar">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>PC détectés sur le Wi-Fi / LAN</h2>
+          <span class="badge ok" id="health-rss">--</span>
+        </div>
+        <p class="hint" id="peers-readout">Recherche automatique sur le réseau local&hellip;</p>
+        <ul class="transport-list" id="peers-list"></ul>
+      </section>
+
       <section class="panel">
         <div class="panel-head">
           <h2>Appairage PIN / QR</h2>
@@ -93,15 +115,6 @@
             <code id="pairing-uri" class="uri">omnikvm://pair</code>
           </div>
         </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h2>PC détectés sur le réseau</h2>
-          <span class="badge ok" id="health-rss">--</span>
-        </div>
-        <p class="hint" id="peers-readout">Recherche sur le réseau local&hellip;</p>
-        <ul class="transport-list" id="peers-list"></ul>
       </section>
 
       <section class="panel">
