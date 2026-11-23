@@ -6,7 +6,9 @@ mod tools;
 mod transfer;
 
 use clap::{Parser, Subcommand};
-use kvm_input_hal::linux::{detect_session_backend, UinputDevice};
+use kvm_input_hal::linux::detect_session_backend;
+#[cfg(not(windows))]
+use kvm_input_hal::linux::UinputDevice;
 use kvm_input_hal::mock::MockHal;
 use kvm_input_hal::{InputEvent, SystemInputInjector};
 use kvm_omni_core::crypto::{build_pairing_uri, generate_pairing_pin};
@@ -143,6 +145,12 @@ async fn main() -> anyhow::Result<()> {
             let injector: Arc<dyn SystemInputInjector> = if mock {
                 Arc::new(MockHal::new())
             } else {
+                #[cfg(windows)]
+                {
+                    println!("Using native Windows SendInput HAL (Win32Injector)");
+                    Arc::new(kvm_input_hal::windows::Win32Injector)
+                }
+                #[cfg(not(windows))]
                 match UinputDevice::open_default() {
                     Ok(dev) => Arc::new(dev),
                     Err(e) => {
