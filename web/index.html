@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OmniKVM Control Plane — Hybrid Multi-OS KVM</title>
-  <meta name="description" content="Configure OmniKVM screen topology, monitor QUIC/WebRTC failover latency, and pair devices via SPAKE2+ QR code." />
+  <meta name="description" content="Configure OmniKVM screen topology, monitor QUIC/Iroh/WebRTC latency via live SSE, verify Blake3 transfers, and pair via SPAKE2+ QR." />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,24 +13,37 @@
       <span class="brand-mark" aria-hidden="true">OK</span>
       <div>
         <h1>OmniKVM Control Plane</h1>
-        <p class="subtitle">Zero-Cost Offline Hybrid Software KVM</p>
+        <p class="subtitle">Zero-Cost Offline Hybrid Software KVM &middot; Axum SSE</p>
       </div>
     </div>
     <div class="status-pill" id="transport-status">
       <span class="dot"></span>
-      <span>QUIC LAN Active &middot; 0.38 ms</span>
+      <span id="status-text">Connecting SSE&hellip;</span>
     </div>
   </header>
 
   <main class="layout">
-    <section class="panel topology-panel">
-      <div class="panel-head">
-        <h2>Virtual Screen Topology</h2>
-        <button id="reset-layout-btn" type="button" class="btn">Reset Layout</button>
-      </div>
-      <div id="topology-stage" class="topology-stage" role="region" aria-label="Interactive monitor layout"></div>
-      <p class="hint" id="topology-readout">Click a screen to inspect DPI scale and edge boundaries.</p>
-    </section>
+    <div class="main-col">
+      <section class="panel topology-panel">
+        <div class="panel-head">
+          <h2>Virtual Screen Topology (Drag &amp; Drop)</h2>
+          <div class="btn-group">
+            <button id="save-layout-btn" type="button" class="btn btn-primary">Save Topology</button>
+            <button id="reset-layout-btn" type="button" class="btn">Reset</button>
+          </div>
+        </div>
+        <div id="topology-stage" class="topology-stage" role="region" aria-label="Interactive monitor layout"></div>
+        <p class="hint" id="topology-readout">Drag any screen to reposition, or click to inspect DPI scale and edge boundaries.</p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Sub-Millisecond Latency Telemetry (Live SSE)</h2>
+          <span class="badge ok" id="rtt-badge">-- ms</span>
+        </div>
+        <svg id="latency-chart" class="latency-chart" viewBox="0 0 600 90" preserveAspectRatio="none" aria-label="Latency sparkline"></svg>
+      </section>
+    </div>
 
     <aside class="sidebar">
       <section class="panel">
@@ -42,10 +55,18 @@
           <div id="qr-container" class="qr-container" aria-label="Pairing QR"></div>
           <div class="pairing-meta">
             <span class="label">One-Time PIN</span>
-            <strong id="pairing-pin" class="pin">482 910</strong>
-            <code id="pairing-uri" class="uri">omnikvm://pair?id=host-1&amp;port=4433</code>
+            <strong id="pairing-pin" class="pin">------</strong>
+            <code id="pairing-uri" class="uri">omnikvm://pair</code>
           </div>
         </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Blake3 P2P Transfer Test</h2>
+          <button id="transfer-btn" type="button" class="btn">Run 2 MB</button>
+        </div>
+        <p class="hint" id="transfer-result">Tests 64 KB Blake3-XOF encrypted chunking &amp; reassembly.</p>
       </section>
 
       <section class="panel">
@@ -53,10 +74,10 @@
           <h2>Transport Failover</h2>
         </div>
         <ul class="transport-list">
-          <li><span>Primary: QUIC (quinn)</span><span class="badge ok">0.38 ms</span></li>
-          <li><span>Fallback: WebRTC DataChannel</span><span class="badge">Standby</span></li>
-          <li><span>Mobile: BLE HID / scrcpy</span><span class="badge">Ready</span></li>
-          <li><span>Dongle: ESP32-S3 (esparrier)</span><span class="badge">USB-CDC</span></li>
+          <li><span>Primary: QUIC (quinn)</span><span class="badge ok">Active</span></li>
+          <li><span>NAT P2P: Iroh Hole-Punch</span><span class="badge">Ready</span></li>
+          <li><span>Fallback: WebRTC DataChannel</span><span class="badge">&lt; 50 ms</span></li>
+          <li><span>Mobile / Dongle: BLE &amp; ESP32-S3</span><span class="badge">HID</span></li>
         </ul>
       </section>
     </aside>

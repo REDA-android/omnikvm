@@ -1,8 +1,14 @@
+mod daemon;
+
 use clap::{Parser, Subcommand};
-use kvm_input_hal::linux::detect_session_backend;
+use kvm_input_hal::linux::{detect_session_backend, UinputDevice};
+use kvm_input_hal::mock::MockHal;
+use kvm_input_hal::{InputEvent, SystemInputInjector};
 use kvm_omni_core::crypto::{build_pairing_uri, generate_pairing_pin};
 use kvm_omni_core::protocol::{flags, MouseMoveDeltaPayload, OmniPacket, PayloadType};
 use kvm_omni_core::topology::{ScreenRect, ScreenTopology};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Parser)]
@@ -16,6 +22,22 @@ struct Cli {
 enum Commands {
     /// Print detected OS, HAL backend, and protocol status
     Status,
+    /// Start the live QUIC HID receiver daemon
+    Serve {
+        #[arg(long, default_value = "0.0.0.0:4433")]
+        bind: SocketAddr,
+        #[arg(long)]
+        mock: bool,
+    },
+    /// Connect to a remote OmniKVM peer and send synthetic HID events
+    Connect {
+        #[arg(long)]
+        peer: SocketAddr,
+        #[arg(long, default_value_t = 10)]
+        dx: i32,
+        #[arg(long, default_value_t = 0)]
+        dy: i32,
+    },
     /// Generate a SPAKE2+ pairing PIN and URI
     Pair {
         #[arg(long, default_value = "omnikvm-host")]
@@ -50,6 +72,26 @@ async fn main() -> anyhow::Result<()> {
             println!("OmniKVM v{}", env!("CARGO_PKG_VERSION"));
             println!("OS: {}", std::env::consts::OS);
             println!("Linux HAL Backend: {backend:?}");
+        }
+        Commands::Serve { bind, mock } => {
+            let injector: Arc<dyn SystemInputInjector> = if mock {
+                Arc::new(MockHal::new())
+            } else {
+                match UinputDevice::open_default() {
+                    Ok(dev) => Arc::new(dev),
+                    Err(e) => {
+                        eprintln!("WARN: /dev/uinput unavailable ({e}), falling back to MockHal");
+                        Arc::new(MockHal::new())
+                    }
+                }
+            };
+            let (_addr, handle) = daemon::run_server(bind, injector, None).await?;
+            handle.await??;
+        }
+        Commands::Connect { peer, dx, dy } => {
+            let events = vec![InputEvent::MouseMove { dx, dy }];
+            let sent = daemon::send_events_to_peer(peer, &events).await?;
+            println!("Sent {sent} HID event(s) over QUIC to {peer}");
         }
         Commands::Pair {
             peer_id,

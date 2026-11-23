@@ -1,58 +1,138 @@
-const screens = [
-  { id: "Linux-Host-4K", x: 30, y: 60, w: 190, h: 120, res: "3840x2160 @ 2.0x" },
-  { id: "Win11-Work-FHD", x: 230, y: 90, w: 145, h: 90, res: "1920x1080 @ 1.0x" },
-  { id: "Android-Tablet", x: 385, y: 110, w: 95, h: 70, res: "BLE HID / scrcpy" }
-];
+const SCALE = 0.065;
+let screens = [];
+let selectedId = "Linux-Host-4K";
+let focusedId = "Linux-Host-4K";
+const rttHistory = [];
 
 const stage = document.getElementById("topology-stage");
 const readout = document.getElementById("topology-readout");
 const pinEl = document.getElementById("pairing-pin");
 const uriEl = document.getElementById("pairing-uri");
 const qrContainer = document.getElementById("qr-container");
+const statusText = document.getElementById("status-text");
+const rttBadge = document.getElementById("rtt-badge");
+const chartEl = document.getElementById("latency-chart");
 
-function renderScreens(selectedId) {
+function renderScreens() {
   stage.innerHTML = "";
   screens.forEach((scr) => {
-    const el = document.createElement("button");
-    el.type = "button";
-    el.className = "screen-node" + (scr.id === selectedId ? " active" : "");
-    el.style.left = scr.x + "px";
-    el.style.top = scr.y + "px";
-    el.style.width = scr.w + "px";
-    el.style.height = scr.h + "px";
-    el.innerHTML = `<strong>${scr.id}</strong><span>${scr.res}</span>`;
-    el.addEventListener("click", () => {
-      renderScreens(scr.id);
-      readout.textContent = `Selected ${scr.id} (${scr.res}) — Hysteresis 4px, Corner Dead-Zone 16px.`;
+    const el = document.createElement("div");
+    el.className =
+      "screen-node" +
+      (scr.id === selectedId ? " active" : "") +
+      (scr.id === focusedId ? " focused" : "");
+    el.style.left = Math.max(8, Math.round(scr.x * SCALE) + 16) + "px";
+    el.style.top = Math.max(8, Math.round(scr.y * SCALE) + 24) + "px";
+    el.style.width = Math.max(82, Math.round(scr.width * SCALE)) + "px";
+    el.style.height = Math.max(58, Math.round(scr.height * SCALE)) + "px";
+    el.innerHTML = `<strong>${scr.id}</strong><span>${scr.width}x${scr.height} @ ${scr.dpi_scale}x</span>`;
+
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let origX = scr.x;
+    let origY = scr.y;
+
+    el.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      selectedId = scr.id;
+      startX = e.clientX;
+      startY = e.clientY;
+      origX = scr.x;
+      origY = scr.y;
+      el.setPointerCapture(e.pointerId);
+      readout.textContent = `Selected ${scr.id} (${scr.width}x${scr.height} @ ${scr.dpi_scale}x) at (${scr.x}, ${scr.y}).`;
     });
+
+    el.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      scr.x = Math.max(0, Math.round(origX + (e.clientX - startX) / SCALE));
+      scr.y = Math.max(0, Math.round(origY + (e.clientY - startY) / SCALE));
+      el.style.left = Math.max(8, Math.round(scr.x * SCALE) + 16) + "px";
+      el.style.top = Math.max(8, Math.round(scr.y * SCALE) + 24) + "px";
+    });
+
+    el.addEventListener("pointerup", () => {
+      dragging = false;
+      renderScreens();
+    });
+
     stage.appendChild(el);
   });
 }
 
-function renderMiniQrMatrix(seed) {
-  const size = 7;
-  let cells = "";
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const bit = ((seed >> ((y * size + x) % 24)) ^ (x * 7 + y * 13)) & 1;
-      if (bit) {
-        cells += `<rect x="${x * 10 + 9}" y="${y * 10 + 9}" width="8" height="8" fill="#0f172a"/>`;
-      }
+function renderLatencyChart() {
+  if (rttHistory.length < 2) return;
+  const w = 600;
+  const h = 90;
+  const maxRtt = 1.0;
+  const pts = rttHistory
+    .map((val, i) => {
+      const x = (i / Math.max(1, rttHistory.length - 1)) * (w - 16) + 8;
+      const y = h - 10 - Math.min(1, val / maxRtt) * (h - 20);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  chartEl.innerHTML = `<polyline fill="none" stroke="#0f766e" stroke-width="2.5" points="${pts}" />`;
+}
+
+async function loadTopology() {
+  const res = await fetch("/api/topology");
+  screens = await res.json();
+  renderScreens();
+}
+
+async function saveTopology() {
+  const res = await fetch("/api/topology", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(screens),
+  });
+  const data = await res.json();
+  readout.textContent = `Saved ${data.saved} screen(s) to live OmniKVM topology.`;
+}
+
+async function loadPairing() {
+  const res = await fetch("/api/pairing");
+  const data = await res.json();
+  pinEl.textContent = data.pin.slice(0, 3) + " " + data.pin.slice(3);
+  uriEl.textContent = data.uri;
+  qrContainer.innerHTML = data.qr_svg;
+}
+
+async function runTransferTest() {
+  const el = document.getElementById("transfer-result");
+  el.textContent = "Encrypting & verifying 2 MB Blake3-XOF stream...";
+  const res = await fetch("/api/transfer-test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ size_kb: 2048 }),
+  });
+  const data = await res.json();
+  el.textContent = `Verified ${data.chunks} x 64KB chunks in ${(data.elapsed_us / 1000).toFixed(2)} ms (blake3: ${data.blake3_hex}...)`;
+}
+
+function connectSse() {
+  const es = new EventSource("/api/events");
+  es.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    statusText.textContent = `${msg.transport} · ${msg.rtt_ms} ms`;
+    rttBadge.textContent = `${msg.rtt_ms} ms`;
+    if (msg.active_screen !== focusedId) {
+      focusedId = msg.active_screen;
+      renderScreens();
     }
-  }
-  qrContainer.innerHTML = `<svg width="88" height="88" viewBox="0 0 88 88" role="img" aria-label="QR Code">${cells}</svg>`;
+    rttHistory.push(msg.rtt_ms);
+    if (rttHistory.length > 40) rttHistory.shift();
+    renderLatencyChart();
+  };
 }
 
-function regeneratePin() {
-  const n = Math.floor(100000 + Math.random() * 900000);
-  const str = String(n);
-  pinEl.textContent = str.slice(0, 3) + " " + str.slice(3);
-  uriEl.textContent = `omnikvm://pair?id=host-1&port=4433&pin=${str}`;
-  renderMiniQrMatrix(n);
-}
+document.getElementById("regen-pin-btn").addEventListener("click", loadPairing);
+document.getElementById("save-layout-btn").addEventListener("click", saveTopology);
+document.getElementById("reset-layout-btn").addEventListener("click", loadTopology);
+document.getElementById("transfer-btn").addEventListener("click", runTransferTest);
 
-document.getElementById("regen-pin-btn").addEventListener("click", regeneratePin);
-document.getElementById("reset-layout-btn").addEventListener("click", () => renderScreens(screens[0].id));
-
-renderScreens(screens[0].id);
-renderMiniQrMatrix(482910);
+loadTopology();
+loadPairing();
+connectSse();

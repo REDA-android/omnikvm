@@ -35,6 +35,9 @@ declare -A REPOS=(
   ["quinn"]="https://github.com/quinn-rs/quinn"
   ["kvm-switch"]="https://github.com/timgws/kvm-switch"
   ["powertoys"]="https://github.com/microsoft/PowerToys"
+  ["iroh"]="https://github.com/n0-computer/iroh"
+  ["reis"]="https://github.com/ids1024/reis"
+  ["axum"]="https://github.com/tokio-rs/axum"
 )
 
 echo "==> Starting strategic cloning of ${#REPOS[@]} reference repositories..."
