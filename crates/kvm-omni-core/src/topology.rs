@@ -153,7 +153,7 @@ impl ScreenTopology {
             };
 
             if let Some(d) = distance {
-                if best.map_or(true, |(_, bd)| d < bd) {
+                if best.is_none_or(|(_, bd)| d < bd) {
                     best = Some((candidate, d));
                 }
             }

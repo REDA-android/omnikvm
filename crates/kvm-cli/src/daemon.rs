@@ -121,18 +121,13 @@ pub async fn run_server(
         let mut count = 0usize;
         if let Some(incoming) = endpoint.accept().await {
             let conn = incoming.await?;
-            loop {
-                match recv_hid_datagram(&conn).await {
-                    Ok(pkt) => {
-                        if let Some(ev) = packet_to_event(&pkt)? {
-                            injector.inject(ev)?;
-                            count += 1;
-                            if max_events.is_some_and(|m| count >= m) {
-                                break;
-                            }
-                        }
+            while let Ok(pkt) = recv_hid_datagram(&conn).await {
+                if let Some(ev) = packet_to_event(&pkt)? {
+                    injector.inject(ev)?;
+                    count += 1;
+                    if max_events.is_some_and(|m| count >= m) {
+                        break;
                     }
-                    Err(_) => break,
                 }
             }
         }

@@ -94,6 +94,14 @@ impl PeerRegistry {
     }
 }
 
+pub const MDNS_MULTICAST_V4: std::net::Ipv4Addr = std::net::Ipv4Addr::new(224, 0, 0, 251);
+
+pub async fn bind_multicast_listener(port: u16) -> Result<UdpSocket, DiscoveryError> {
+    let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port))).await?;
+    let _ = socket.join_multicast_v4(MDNS_MULTICAST_V4, std::net::Ipv4Addr::UNSPECIFIED);
+    Ok(socket)
+}
+
 pub async fn send_announcement(
     socket: &UdpSocket,
     target: SocketAddr,
@@ -129,5 +137,15 @@ mod tests {
         let (got, _from) = recv_announcement(&receiver).await.unwrap();
         assert_eq!(got.peer_id, "node-a");
         assert_eq!(got.quic_port, 4433);
+    }
+
+    #[tokio::test]
+    async fn peer_registry_upserts_and_prunes() {
+        let mut reg = PeerRegistry::default();
+        let ann = PeerAnnouncement::new("node-b", "laptop", 4433, 4434, "cafebabe");
+        reg.upsert(ann, "127.0.0.1:4433".parse().unwrap());
+        assert_eq!(reg.list().len(), 1);
+        reg.prune_stale(Duration::from_secs(60));
+        assert_eq!(reg.list().len(), 1);
     }
 }
