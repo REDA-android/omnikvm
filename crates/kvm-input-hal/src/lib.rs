@@ -1,5 +1,7 @@
 pub mod ddc;
+pub mod ddc_i2c;
 pub mod linux;
+pub mod linux_capture;
 pub mod macos;
 pub mod mock;
 pub mod wayland;

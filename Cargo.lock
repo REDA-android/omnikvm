@@ -882,6 +882,7 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "blake3",
  "clap",
  "kvm-clipboard-sync",
  "kvm-input-hal",

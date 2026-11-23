@@ -3,8 +3,8 @@ pub mod identity;
 
 use bytes::Bytes;
 use kvm_omni_core::protocol::OmniPacket;
-pub use quinn::Connection;
-use quinn::{ClientConfig, Endpoint};
+pub use quinn::{Connection, Endpoint};
+use quinn::ClientConfig;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};

@@ -13,7 +13,7 @@ use kvm_transport_quic::identity::{
     load_or_generate_identity, make_server_endpoint_with_cert, recv_sealed_datagram,
     send_sealed_datagram,
 };
-use kvm_transport_quic::make_client_endpoint;
+use kvm_transport_quic::{make_client_endpoint, Connection, Endpoint};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -103,13 +103,12 @@ pub async fn run_secure_server(
     Ok((local_addr, handle))
 }
 
-/// Connects, authenticates with `opts.pin`, pins the server identity (TOFU) and
-/// streams sealed HID datagrams.
-pub async fn send_events_secure(
+/// Connects to `remote_addr`, authenticates with `opts.pin`, pins the server identity
+/// (TOFU, persisted) and returns a live connection plus its datagram sealer.
+pub async fn connect_secure(
     remote_addr: SocketAddr,
-    events: &[InputEvent],
     opts: &SecureOpts,
-) -> Result<usize> {
+) -> Result<(Endpoint, Connection, DatagramSealer)> {
     let mut cfg = OmniConfig::load_or_default(&opts.config_path)?;
     let mut ks = TofuKeystore::from_hex_map(&cfg.trusted_peers);
     let (ident, _) = load_or_generate_identity(&identity_dir(&opts.config_path))?;
@@ -119,18 +118,40 @@ pub async fn send_events_secure(
         .await
         .context("authenticated handshake failed")?;
     persist_trust(&mut cfg, &ks, &opts.config_path)?;
+    Ok((endpoint, conn, DatagramSealer::new(&sk)))
+}
 
-    let mut sealer = DatagramSealer::new(&sk);
-    for (idx, &ev) in events.iter().enumerate() {
-        send_sealed_datagram(&conn, &mut sealer, &event_to_packet(idx as u32, ev)?)?;
-        if idx % 200 == 199 {
-            tokio::task::yield_now().await;
-        }
+/// Streams sealed HID datagrams from `rx` until the channel closes.
+pub async fn forward_stream(
+    conn: &Connection,
+    sealer: &mut DatagramSealer,
+    mut rx: tokio::sync::mpsc::Receiver<InputEvent>,
+) -> Result<usize> {
+    let mut seq = 0u32;
+    while let Some(ev) = rx.recv().await {
+        send_sealed_datagram(conn, sealer, &event_to_packet(seq, ev)?)?;
+        seq = seq.wrapping_add(1);
     }
+    Ok(seq as usize)
+}
+
+/// One-shot helper: authenticates and sends `events` as sealed datagrams.
+pub async fn send_events_secure(
+    remote_addr: SocketAddr,
+    events: &[InputEvent],
+    opts: &SecureOpts,
+) -> Result<usize> {
+    let (endpoint, conn, mut sealer) = connect_secure(remote_addr, opts).await?;
+    let (tx, rx) = tokio::sync::mpsc::channel(events.len().max(1));
+    for &ev in events {
+        tx.send(ev).await?;
+    }
+    drop(tx);
+    let sent = forward_stream(&conn, &mut sealer, rx).await?;
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     conn.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
-    Ok(events.len())
+    Ok(sent)
 }
 
 #[cfg(test)]

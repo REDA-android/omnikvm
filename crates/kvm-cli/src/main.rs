@@ -2,6 +2,7 @@ mod daemon;
 #[allow(dead_code)]
 mod router;
 mod secure;
+mod tools;
 mod transfer;
 
 use clap::{Parser, Subcommand};
@@ -79,6 +80,38 @@ enum Commands {
         peer: SocketAddr,
         #[arg(long)]
         file: std::path::PathBuf,
+    },
+    /// Switch a monitor input over DDC/CI (VCP 0x60) via /dev/i2c-N
+    DdcSwitch {
+        /// dp1 | dp2 | hdmi1 | hdmi2 | usbc
+        #[arg(long)]
+        input: String,
+        #[arg(long)]
+        bus: Option<std::path::PathBuf>,
+        /// Only print the MCCS frame
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List I2C buses and DDC/CI input codes
+    DdcList,
+    /// Classify stdin clipboard content; --osc52 emits an SSH/tmux-friendly copy sequence
+    Clipboard {
+        #[arg(long)]
+        osc52: bool,
+    },
+    /// Capture a local evdev device and forward it to an authenticated peer
+    Forward {
+        #[arg(long)]
+        device: std::path::PathBuf,
+        #[arg(long)]
+        peer: SocketAddr,
+        #[arg(long, env = "OMNIKVM_PIN")]
+        pin: String,
+        #[arg(long, default_value = "omnikvm.json")]
+        config: std::path::PathBuf,
+        /// Exclusive EVIOCGRAB (local apps stop receiving input)
+        #[arg(long)]
+        grab: bool,
     },
     /// Receive an encrypted QUIC file transfer and verify its Blake3 digest
     RecvFile {
@@ -211,6 +244,26 @@ async fn main() -> anyhow::Result<()> {
         Commands::SendFile { peer, file } => {
             let digest = transfer::send_file_quic(peer, &file, [0x42u8; 32]).await?;
             println!("File sent & Blake3 verified: {:02x?}", &digest[..8]);
+        }
+        Commands::DdcSwitch {
+            input,
+            bus,
+            dry_run,
+        } => tools::ddc_switch(&input, bus.as_deref(), dry_run)?,
+        Commands::DdcList => tools::ddc_list(),
+        Commands::Clipboard { osc52 } => tools::clipboard_from_stdin(osc52)?,
+        Commands::Forward {
+            device,
+            peer,
+            pin,
+            config,
+            grab,
+        } => {
+            let opts = secure::SecureOpts {
+                pin,
+                config_path: config,
+            };
+            tools::forward_device(device, peer, opts, grab).await?;
         }
         Commands::RecvFile { bind, out } => {
             let (addr, handle) = transfer::recv_file_quic(bind, &out, [0x42u8; 32]).await?;

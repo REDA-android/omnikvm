@@ -32,6 +32,28 @@ pub fn build_set_vcp_frame(vcp_code: u8, value: u16) -> [u8; 7] {
     frame
 }
 
+impl MonitorInputSource {
+    pub const ALL: [MonitorInputSource; 5] = [
+        Self::DisplayPort1,
+        Self::DisplayPort2,
+        Self::Hdmi1,
+        Self::Hdmi2,
+        Self::UsbC,
+    ];
+
+    /// Parses CLI/HTTP friendly names: `dp1`, `dp2`, `hdmi1`, `hdmi2`, `usbc`.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().replace(['-', '_', ' '], "").as_str() {
+            "dp1" | "displayport1" => Some(Self::DisplayPort1),
+            "dp2" | "displayport2" => Some(Self::DisplayPort2),
+            "hdmi1" => Some(Self::Hdmi1),
+            "hdmi2" => Some(Self::Hdmi2),
+            "usbc" | "typec" => Some(Self::UsbC),
+            _ => None,
+        }
+    }
+}
+
 pub fn build_input_switch_frame(input: MonitorInputSource) -> [u8; 7] {
     build_set_vcp_frame(VCP_INPUT_SOURCE, input as u16)
 }
@@ -64,5 +86,13 @@ mod tests {
         assert_eq!(bright[3], VCP_BRIGHTNESS);
         assert_eq!(bright[5], 75);
         assert!(verify_ddc_checksum(&bright));
+    }
+
+    #[test]
+    fn parses_friendly_input_names() {
+        assert_eq!(MonitorInputSource::parse("HDMI-1"), Some(MonitorInputSource::Hdmi1));
+        assert_eq!(MonitorInputSource::parse("dp2"), Some(MonitorInputSource::DisplayPort2));
+        assert_eq!(MonitorInputSource::parse("usb_c"), Some(MonitorInputSource::UsbC));
+        assert_eq!(MonitorInputSource::parse("vga"), None);
     }
 }
