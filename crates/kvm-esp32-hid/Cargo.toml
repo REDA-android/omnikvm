@@ -1,0 +1,13 @@
+[package]
+name = "kvm-esp32-hid"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+crc32c.workspace = true
+
+[build-dependencies]
+cc = "1.1"

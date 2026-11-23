@@ -1,0 +1,52 @@
+name: OmniKVM CI
+
+on:
+  push:
+    branches: [main, feat/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install Linux HAL dev libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxtst-dev libxi-dev libxfixes-dev libwayland-dev libxkbcommon-dev libudev-dev libdbus-1-dev libei-dev musl-tools
+      - name: Run workspace tests (release)
+        run: cargo test --workspace --release
+      - name: Build static musl binaries
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: cargo build --release --target x86_64-unknown-linux-musl -p kvm-cli -p kvm-tray-ui
+
+  hal-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check -p kvm-input-hal -p kvm-omni-core
+
+  hal-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - run: cargo check --target aarch64-apple-darwin -p kvm-input-hal -p kvm-omni-core
+
+  go-mdns-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - run: go test -v ./...
+        working-directory: services/omnikvm-mdns-go
