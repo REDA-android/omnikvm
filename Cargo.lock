@@ -736,9 +736,11 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "kvm-clipboard-sync",
  "kvm-input-hal",
  "kvm-omni-core",
  "kvm-transport-quic",
+ "kvm-transport-webrtc",
  "tokio",
  "tracing-subscriber",
 ]
@@ -775,6 +777,7 @@ dependencies = [
 name = "kvm-input-hal"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "serde",
  "thiserror 1.0.69",
  "windows-sys 0.59.0",

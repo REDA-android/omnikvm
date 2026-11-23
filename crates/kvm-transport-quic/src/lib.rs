@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use kvm_omni_core::protocol::OmniPacket;
-use quinn::{ClientConfig, Connection, Endpoint, ServerConfig};
+pub use quinn::Connection;
+use quinn::{ClientConfig, Endpoint, ServerConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};

@@ -1,4 +1,6 @@
 mod daemon;
+#[allow(dead_code)]
+mod router;
 
 use clap::{Parser, Subcommand};
 use kvm_input_hal::linux::{detect_session_backend, UinputDevice};

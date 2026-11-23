@@ -21,7 +21,7 @@ pub fn detect_session_backend() -> LinuxSessionBackend {
     }
 }
 
-/// Linux `uinput` ioctl request numbers (x86_64/aarch64 `linux/uinput.h`).
+/// Linux `uinput` ioctl request numbers (`linux/uinput.h`).
 pub mod uinput_ioctl {
     pub const UI_DEV_CREATE: u64 = 0x5501;
     pub const UI_DEV_DESTROY: u64 = 0x5502;
@@ -94,11 +94,18 @@ impl RawInputEvent {
 
 pub struct UinputDevice {
     file: Mutex<File>,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    kernel_created: bool,
 }
 
 impl UinputDevice {
+    /// Opens `/dev/uinput` and registers a virtual mouse + keyboard with the Linux kernel.
     pub fn open_default() -> Result<Self, HalError> {
-        Self::open_path(Path::new("/dev/uinput"))
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut dev = Self::open_path(Path::new("/dev/uinput"))?;
+        #[cfg(target_os = "linux")]
+        dev.setup_kernel_device()?;
+        Ok(dev)
     }
 
     pub fn open_path(path: &Path) -> Result<Self, HalError> {
@@ -108,7 +115,45 @@ impl UinputDevice {
             .map_err(|e| HalError::DeviceOpen(format!("{}: {e}", path.display())))?;
         Ok(Self {
             file: Mutex::new(file),
+            kernel_created: false,
         })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn setup_kernel_device(&mut self) -> Result<(), HalError> {
+        use std::os::fd::AsRawFd;
+        let fd = self.file.lock().unwrap().as_raw_fd();
+        unsafe {
+            let set_ev = |bit: i32| libc::ioctl(fd, uinput_ioctl::UI_SET_EVBIT as _, bit);
+            let set_rel = |bit: i32| libc::ioctl(fd, uinput_ioctl::UI_SET_RELBIT as _, bit);
+            let set_key = |bit: i32| libc::ioctl(fd, uinput_ioctl::UI_SET_KEYBIT as _, bit);
+
+            if set_ev(0x01) < 0 || set_ev(0x02) < 0 {
+                return Err(HalError::DeviceOpen("UI_SET_EVBIT failed".into()));
+            }
+            for rel in [0x00, 0x01, 0x08] {
+                if set_rel(rel) < 0 {
+                    return Err(HalError::DeviceOpen("UI_SET_RELBIT failed".into()));
+                }
+            }
+            for btn in [0x110, 0x111, 0x112] {
+                if set_key(btn) < 0 {
+                    return Err(HalError::DeviceOpen("UI_SET_KEYBIT (mouse) failed".into()));
+                }
+            }
+            for key in 1..=248 {
+                let _ = set_key(key);
+            }
+            let setup = UinputSetup::omnikvm_virtual("OmniKVM Virtual HID");
+            if libc::ioctl(fd, uinput_ioctl::UI_DEV_SETUP as _, &setup) < 0 {
+                return Err(HalError::DeviceOpen("UI_DEV_SETUP failed".into()));
+            }
+            if libc::ioctl(fd, uinput_ioctl::UI_DEV_CREATE as _) < 0 {
+                return Err(HalError::DeviceOpen("UI_DEV_CREATE failed".into()));
+            }
+        }
+        self.kernel_created = true;
+        Ok(())
     }
 
     pub fn emit_raw(&self, ev_type: u16, code: u16, value: i32) -> Result<(), HalError> {
@@ -118,6 +163,20 @@ impl UinputDevice {
             .write_all(&ev.to_bytes())
             .map_err(|e| HalError::Injection(e.to_string()))?;
         Ok(())
+    }
+}
+
+impl Drop for UinputDevice {
+    fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if self.kernel_created {
+            use std::os::fd::AsRawFd;
+            if let Ok(guard) = self.file.lock() {
+                unsafe {
+                    let _ = libc::ioctl(guard.as_raw_fd(), uinput_ioctl::UI_DEV_DESTROY as _);
+                }
+            }
+        }
     }
 }
 
@@ -178,7 +237,6 @@ mod tests {
         .unwrap();
         let bytes = std::fs::read(&tmp).unwrap();
         let _ = std::fs::remove_file(&tmp);
-        // MouseMove (REL_X, REL_Y, SYN) = 3 * 24 bytes; Key (EV_KEY, SYN) = 2 * 24 bytes => 120 bytes
         assert_eq!(bytes.len(), 120);
         let setup = UinputSetup::omnikvm_virtual("OmniKVM Virtual Mouse");
         assert_eq!(setup.vendor, 0x4F4B);

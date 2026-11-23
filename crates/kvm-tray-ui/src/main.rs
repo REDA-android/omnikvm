@@ -226,4 +226,35 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    async fn axum_control_center_http_endpoints_work() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, build_router()).await;
+        });
+
+        async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
+            let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            s.write_all(req.as_bytes()).await.unwrap();
+            let mut buf = Vec::new();
+            s.read_to_end(&mut buf).await.unwrap();
+            String::from_utf8_lossy(&buf).into_owned()
+        }
+
+        let html = http_get(addr, "/").await;
+        assert!(html.contains("200 OK") && html.contains("OmniKVM Control Plane"));
+
+        let pairing = http_get(addr, "/api/pairing").await;
+        assert!(pairing.contains("omnikvm://pair") && pairing.contains("<svg"));
+
+        let topo = http_get(addr, "/api/topology").await;
+        assert!(topo.contains("Linux-Host-4K") && topo.contains("Win11-Work-FHD"));
+
+        server.abort();
+    }
 }
