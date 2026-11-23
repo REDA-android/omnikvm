@@ -102,10 +102,11 @@ enum Commands {
         #[arg(long)]
         osc52: bool,
     },
-    /// Capture a local evdev device and forward it to an authenticated peer
+    /// Capture local mouse & keyboard (Win32Hook on Windows, evdev on Linux) and forward to a peer
     Forward {
+        /// Linux evdev path (e.g. /dev/input/event3). Not needed on Windows.
         #[arg(long)]
-        device: std::path::PathBuf,
+        device: Option<std::path::PathBuf>,
         #[arg(long)]
         peer: SocketAddr,
         #[arg(long, env = "OMNIKVM_PIN")]

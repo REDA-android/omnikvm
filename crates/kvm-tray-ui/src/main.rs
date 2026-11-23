@@ -1,4 +1,6 @@
+mod codec;
 mod live;
+mod session;
 
 use axum::extract::State;
 use axum::http::header;
@@ -157,7 +159,8 @@ pub fn build_router(config_path: Option<PathBuf>) -> Router {
 }
 
 pub fn build_router_with_live(config_path: Option<PathBuf>, live_state: live::LiveState) -> Router {
-    let state = AppState::from_path(config_path);
+    let state = AppState::from_path(config_path.clone());
+    let sess = session::SessionManager::new(config_path);
     Router::new()
         .route("/", get(get_index))
         .route("/styles.css", get(get_css))
@@ -168,6 +171,7 @@ pub fn build_router_with_live(config_path: Option<PathBuf>, live_state: live::Li
         .route("/api/transfer-test", post(post_transfer_test))
         .with_state(state)
         .merge(live::router(live_state))
+        .merge(session::router(sess))
 }
 
 fn open_in_browser(url: &str) {

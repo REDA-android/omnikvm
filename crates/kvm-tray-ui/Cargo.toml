@@ -10,6 +10,7 @@ kvm-omni-core = { path = "../kvm-omni-core" }
 kvm-discovery-mdns = { path = "../kvm-discovery-mdns" }
 kvm-clipboard-sync = { path = "../kvm-clipboard-sync" }
 kvm-input-hal = { path = "../kvm-input-hal" }
+kvm-transport-quic = { path = "../kvm-transport-quic" }
 blake3.workspace = true
 axum.workspace = true
 tokio.workspace = true

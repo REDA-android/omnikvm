@@ -992,6 +992,7 @@ dependencies = [
  "kvm-discovery-mdns",
  "kvm-input-hal",
  "kvm-omni-core",
+ "kvm-transport-quic",
  "qrcode",
  "serde",
  "serde_json",

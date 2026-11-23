@@ -7,6 +7,7 @@ use kvm_clipboard_sync::osc52::encode_osc52;
 use kvm_clipboard_sync::semantic::classify_clipboard_bytes;
 use kvm_input_hal::ddc::{build_input_switch_frame, MonitorInputSource, VCP_INPUT_SOURCE};
 use kvm_input_hal::ddc_i2c::{list_i2c_buses, set_vcp};
+#[cfg(not(windows))]
 use kvm_input_hal::linux_capture::EvdevCapture;
 use kvm_input_hal::{InputEvent, SystemInputHook};
 use kvm_omni_core::hotkeys::{HotkeyAction, HotkeyManager};
@@ -82,17 +83,15 @@ pub fn filter_event(hk: &mut HotkeyManager, locked: &mut bool, ev: InputEvent) -
 }
 
 pub async fn forward_device(
-    device: PathBuf,
+    device: Option<PathBuf>,
     peer: SocketAddr,
     opts: SecureOpts,
     grab: bool,
 ) -> Result<()> {
     let (endpoint, conn, mut sealer) = connect_secure(peer, &opts).await?;
-    println!("Authenticated with {peer}; forwarding {} (Ctrl+Alt+Esc to stop, Ctrl+Alt+L lock)", device.display());
     let (tx, rx) = tokio::sync::mpsc::channel::<Option<InputEvent>>(1024);
-    let mut cap = EvdevCapture::new(&device, grab);
     let hk = std::sync::Mutex::new((HotkeyManager::with_defaults(), false));
-    cap.start_capture(move |ev| {
+    let on_event = move |ev: InputEvent| {
         let mut g = hk.lock().unwrap();
         let (hkm, locked) = &mut *g;
         let (forward, action) = filter_event(hkm, locked, ev);
@@ -100,11 +99,29 @@ pub async fn forward_device(
             eprintln!("hotkey: {a:?} (cursor lock = {locked})");
         }
         if action == Some(HotkeyAction::ReleaseCapture) {
-            let _ = tx.blocking_send(None); // end-of-stream marker
+            let _ = tx.blocking_send(None);
         } else if forward {
             let _ = tx.blocking_send(Some(ev));
         }
-    })?;
+    };
+
+    #[cfg(windows)]
+    let mut cap = {
+        let _ = (device, grab);
+        println!("Authenticated with {peer}; capturing Windows mouse/keyboard (Ctrl+Alt+Esc to stop, Ctrl+Alt+L lock)");
+        let mut h = kvm_input_hal::windows::Win32Hook::default();
+        h.start_capture(on_event)?;
+        h
+    };
+    #[cfg(not(windows))]
+    let mut cap = {
+        let dev = device.ok_or_else(|| anyhow::anyhow!("--device /dev/input/eventX is required on Linux"))?;
+        println!("Authenticated with {peer}; forwarding {} (Ctrl+Alt+Esc to stop, Ctrl+Alt+L lock)", dev.display());
+        let mut h = EvdevCapture::new(&dev, grab);
+        h.start_capture(on_event)?;
+        h
+    };
+
     let (ftx, frx) = tokio::sync::mpsc::channel(1024);
     let pump = tokio::spawn(async move {
         let mut rx = rx;

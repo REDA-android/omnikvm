@@ -1,75 +1,147 @@
-const SCALE = 0.065;
+const SCALE = 0.085;
 let screens = [];
-let selectedId = "Linux-Host-4K";
+let rttHistory = [];
 let focusedId = "Linux-Host-4K";
-const rttHistory = [];
+let cursorLocked = false;
 
 const stage = document.getElementById("topology-stage");
 const readout = document.getElementById("topology-readout");
-const pinEl = document.getElementById("pairing-pin");
-const uriEl = document.getElementById("pairing-uri");
-const qrContainer = document.getElementById("qr-container");
 const statusText = document.getElementById("status-text");
+const sessionDot = document.getElementById("session-dot");
+const sessionBanner = document.getElementById("session-banner");
+const stopBtn = document.getElementById("stop-session-btn");
+const testMoveBtn = document.getElementById("test-move-btn");
 const rttBadge = document.getElementById("rtt-badge");
 const chartEl = document.getElementById("latency-chart");
+const lockBtn = document.getElementById("lock-cursor-btn");
+
+function renderSession(s) {
+  stopBtn.hidden = s.mode === "idle";
+  testMoveBtn.disabled = s.mode !== "client";
+  sessionDot.classList.toggle("live", s.mode !== "idle");
+
+  if (s.mode === "host") {
+    statusText.textContent = `Serveur actif · ${s.bind_addr}`;
+    sessionBanner.className = "session-banner ok";
+    sessionBanner.textContent = `Ce PC partage son écran sur ${s.bind_addr} · PIN: ${s.pin} · ${s.events_received} événement(s) reçu(s)`;
+  } else if (s.mode === "client") {
+    statusText.textContent = `Connecté à ${s.peer_addr}`;
+    sessionBanner.className = "session-banner ok";
+    sessionBanner.textContent = `Contrôle actif vers ${s.peer_addr} · ${s.events_sent} événement(s) envoyé(s) (Ctrl+Alt+Esc pour libérer)`;
+  } else {
+    statusText.textContent = "Inactif";
+    sessionBanner.className = s.last_error ? "session-banner err" : "session-banner";
+    sessionBanner.textContent = s.last_error
+      ? `Erreur : ${s.last_error}`
+      : "Aucune session active. Choisissez « Partager ce PC » ou « Connecter & Contrôler ».";
+  }
+}
+
+async function pollSession() {
+  try {
+    const res = await fetch("/api/session");
+    renderSession(await res.json());
+  } catch (_) {}
+}
+
+document.getElementById("start-host-btn").addEventListener("click", async () => {
+  const port = parseInt(document.getElementById("host-port").value, 10) || 4433;
+  const pin = document.getElementById("host-pin").value.trim() || null;
+  const res = await fetch("/api/session/start-host", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ port, pin }),
+  });
+  const d = await res.json();
+  if (d.ok) {
+    if (d.session.pin) document.getElementById("host-pin").value = d.session.pin;
+    renderSession(d.session);
+  } else {
+    sessionBanner.className = "session-banner err";
+    sessionBanner.textContent = `Erreur : ${d.error}`;
+  }
+});
+
+document.getElementById("start-client-btn").addEventListener("click", async () => {
+  const peer = document.getElementById("client-peer").value.trim();
+  const pin = document.getElementById("client-pin").value.trim();
+  sessionBanner.className = "session-banner";
+  sessionBanner.textContent = `Connexion QUIC vers ${peer}…`;
+  const res = await fetch("/api/session/start-client", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ peer, pin, capture: true }),
+  });
+  const d = await res.json();
+  if (d.ok) {
+    renderSession(d.session);
+  } else {
+    sessionBanner.className = "session-banner err";
+    sessionBanner.textContent = `Erreur : ${d.error}`;
+  }
+});
+
+testMoveBtn.addEventListener("click", async () => {
+  const res = await fetch("/api/session/test-move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dx: 40, dy: 0 }),
+  });
+  const d = await res.json();
+  if (d.ok) renderSession(d.session);
+});
+
+stopBtn.addEventListener("click", async () => {
+  const res = await fetch("/api/session/stop", { method: "POST" });
+  const d = await res.json();
+  if (d.ok) renderSession(d.session);
+});
 
 function renderScreens() {
   stage.innerHTML = "";
   screens.forEach((scr) => {
     const el = document.createElement("div");
-    el.className =
-      "screen-node" +
-      (scr.id === selectedId ? " active" : "") +
-      (scr.id === focusedId ? " focused" : "");
-    el.style.left = Math.max(8, Math.round(scr.x * SCALE) + 16) + "px";
-    el.style.top = Math.max(8, Math.round(scr.y * SCALE) + 24) + "px";
-    el.style.width = Math.max(82, Math.round(scr.width * SCALE)) + "px";
-    el.style.height = Math.max(58, Math.round(scr.height * SCALE)) + "px";
-    el.innerHTML = `<strong>${scr.id}</strong><span>${scr.width}x${scr.height} @ ${scr.dpi_scale}x</span>`;
+    el.className = "screen-box" + (scr.id === focusedId ? " focused" : "");
+    el.style.left = `${20 + scr.x * SCALE}px`;
+    el.style.top = `${20 + scr.y * SCALE}px`;
+    el.style.width = `${Math.max(96, scr.width * SCALE)}px`;
+    el.style.height = `${Math.max(66, scr.height * SCALE)}px`;
+    el.innerHTML = `<div class="screen-title">${scr.id}</div><div class="screen-meta">${scr.width}x${scr.height} · ${scr.dpi_scale.toFixed(1)}x</div>`;
 
-    let dragging = false;
-    let startX = 0;
-    let startY = 0;
-    let origX = scr.x;
-    let origY = scr.y;
-
+    let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
     el.addEventListener("pointerdown", (e) => {
       dragging = true;
-      selectedId = scr.id;
       startX = e.clientX;
       startY = e.clientY;
       origX = scr.x;
       origY = scr.y;
+      focusedId = scr.id;
       el.setPointerCapture(e.pointerId);
-      readout.textContent = `Selected ${scr.id} (${scr.width}x${scr.height} @ ${scr.dpi_scale}x) at (${scr.x}, ${scr.y}).`;
     });
-
     el.addEventListener("pointermove", (e) => {
       if (!dragging) return;
-      scr.x = Math.max(0, Math.round(origX + (e.clientX - startX) / SCALE));
-      scr.y = Math.max(0, Math.round(origY + (e.clientY - startY) / SCALE));
-      el.style.left = Math.max(8, Math.round(scr.x * SCALE) + 16) + "px";
-      el.style.top = Math.max(8, Math.round(scr.y * SCALE) + 24) + "px";
+      scr.x = Math.round((origX + (e.clientX - startX) / SCALE) / 10) * 10;
+      scr.y = Math.round((origY + (e.clientY - startY) / SCALE) / 10) * 10;
+      el.style.left = `${20 + scr.x * SCALE}px`;
+      el.style.top = `${20 + scr.y * SCALE}px`;
+      readout.textContent = `${scr.id} → (${scr.x}, ${scr.y})`;
     });
-
     el.addEventListener("pointerup", () => {
       dragging = false;
       renderScreens();
     });
-
     stage.appendChild(el);
   });
 }
 
 function renderLatencyChart() {
   if (rttHistory.length < 2) return;
-  const w = 600;
-  const h = 90;
-  const maxRtt = Math.max(10, ...rttHistory) * 1.2;
+  const w = 600, h = 72;
+  const maxVal = Math.max(10, ...rttHistory) * 1.2;
   const pts = rttHistory
     .map((val, i) => {
       const x = (i / Math.max(1, rttHistory.length - 1)) * (w - 16) + 8;
-      const y = h - 10 - Math.min(1, val / maxRtt) * (h - 20);
+      const y = h - 8 - Math.min(1, val / maxVal) * (h - 16);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
@@ -77,8 +149,7 @@ function renderLatencyChart() {
 }
 
 async function loadTopology() {
-  const res = await fetch("/api/topology");
-  screens = await res.json();
+  screens = await (await fetch("/api/topology")).json();
   renderScreens();
 }
 
@@ -88,35 +159,62 @@ async function saveTopology() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(screens),
   });
-  const data = await res.json();
-  readout.textContent = `Saved ${data.saved} screen(s) to live OmniKVM topology.`;
+  const d = await res.json();
+  readout.textContent = `Disposition enregistrée (${d.saved} écrans).`;
 }
 
 async function loadPairing() {
-  const res = await fetch("/api/pairing");
-  const data = await res.json();
-  pinEl.textContent = data.pin.slice(0, 3) + " " + data.pin.slice(3);
-  uriEl.textContent = data.uri;
-  qrContainer.innerHTML = data.qr_svg;
+  const data = await (await fetch("/api/pairing")).json();
+  document.getElementById("pairing-pin").textContent = data.pin;
+  document.getElementById("pairing-uri").textContent = data.uri;
+  document.getElementById("qr-container").innerHTML = data.qr_svg;
+  const hostPin = document.getElementById("host-pin");
+  if (!hostPin.value) hostPin.value = data.pin;
 }
 
-async function runTransferTest() {
-  const el = document.getElementById("transfer-result");
-  el.textContent = "Encrypting & verifying 2 MB Blake3-XOF stream...";
-  const res = await fetch("/api/transfer-test", {
+function renderLock(locked) {
+  cursorLocked = locked;
+  lockBtn.textContent = "Verrouillage curseur : " + (locked ? "ON" : "OFF");
+}
+
+lockBtn.addEventListener("click", async () => {
+  const res = await fetch("/api/cursor-lock", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ size_kb: 2048 }),
+    body: JSON.stringify({ locked: !cursorLocked }),
   });
-  const data = await res.json();
-  el.textContent = `Verified ${data.chunks} x 64KB chunks in ${(data.elapsed_us / 1000).toFixed(2)} ms (blake3: ${data.blake3_hex}...)`;
+  renderLock((await res.json()).locked);
+});
+
+async function loadHealthAndPeers() {
+  try {
+    const [hRes, pRes] = await Promise.all([fetch("/api/health"), fetch("/api/peers")]);
+    const health = await hRes.json();
+    const peers = await pRes.json();
+    const mb = health.rss_kb ? `${(health.rss_kb / 1024).toFixed(1)} Mo` : health.os;
+    document.getElementById("health-rss").textContent = `${health.os} · ${mb}`;
+    document.getElementById("peers-readout").textContent = peers.discovered.length
+      ? `${peers.discovered.length} PC trouvé(s) (cliquez pour remplir l'IP) :`
+      : "Aucun autre PC détecté automatiquement (entrez l'IP manuellement).";
+    const list = document.getElementById("peers-list");
+    list.replaceChildren(
+      ...peers.discovered.map((p) => {
+        const li = document.createElement("li");
+        const ip = p.addr.split(":")[0];
+        li.innerHTML = `<span>${p.peer_id} (${p.os})</span><span class="badge ok">${ip}:${p.quic_port}</span>`;
+        li.addEventListener("click", () => {
+          document.getElementById("client-peer").value = `${ip}:${p.quic_port}`;
+        });
+        return li;
+      })
+    );
+  } catch (_) {}
 }
 
 function connectSse() {
   const es = new EventSource("/api/events");
   es.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    statusText.textContent = `${msg.transport} · ${msg.peers} peer(s)`;
     rttBadge.textContent = `${msg.pipeline_us} µs`;
     if (msg.cursor_locked !== cursorLocked) renderLock(msg.cursor_locked);
     rttHistory.push(msg.pipeline_us);
@@ -125,101 +223,13 @@ function connectSse() {
   };
 }
 
-let cursorLocked = false;
-const lockBtn = document.getElementById("lock-cursor-btn");
-function renderLock(locked) {
-  cursorLocked = locked;
-  lockBtn.textContent = "Lock Cursor: " + (locked ? "ON" : "OFF");
-  readout.textContent = locked
-    ? "Cursor locked to active screen (gaming/fullscreen mode). Hotkey: Ctrl+Alt+L."
-    : "Cursor edge switching enabled (hysteresis 4px, dead-zone 16px).";
-}
-lockBtn.addEventListener("click", async () => {
-  try {
-    const res = await fetch("/api/cursor-lock", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ locked: !cursorLocked }),
-    });
-    renderLock((await res.json()).locked);
-  } catch (_) {}
-});
-
-async function loadDdcBuses() {
-  try {
-    const { buses } = await (await fetch("/api/ddc/buses")).json();
-    const sel = document.getElementById("ddc-bus");
-    for (const b of buses) {
-      const o = document.createElement("option");
-      o.value = b;
-      o.textContent = b;
-      sel.appendChild(o);
-    }
-  } catch (_) {}
-}
-document.getElementById("ddc-buttons").addEventListener("click", async (e) => {
-  const input = e.target.dataset && e.target.dataset.input;
-  if (!input) return;
-  const bus = document.getElementById("ddc-bus").value;
-  const out = document.getElementById("ddc-result");
-  const res = await fetch("/api/ddc/switch", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ input, bus: bus || null, dry_run: !bus }),
-  });
-  const d = await res.json();
-  out.textContent = d.ok
-    ? `${d.input}: frame [${d.frame}] ${d.applied ? "applied on " + bus : "(dry run)"}`
-    : `Error: ${d.error}`;
-});
-
-document.getElementById("clip-btn").addEventListener("click", async () => {
-  const text = document.getElementById("clip-input").value;
-  const res = await fetch("/api/clipboard", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  });
-  const d = await res.json();
-  document.getElementById("clip-result").textContent =
-    `Format: ${JSON.stringify(d.format)} · ${d.bytes} B · blake3 ${d.blake3}\n` +
-    `Envelope #${d.transfer_id} ${d.envelope_verified ? "verified" : "FAILED"} · ct ${d.ciphertext_preview}…\n` +
-    `OSC 52: ${d.osc52.slice(0, 120)}${d.osc52.length > 120 ? "…" : ""}`;
-});
-
-async function loadHealthAndPeers() {
-  try {
-    const [hRes, pRes] = await Promise.all([fetch("/api/health"), fetch("/api/peers")]);
-    const health = await hRes.json();
-    const peers = await pRes.json();
-    const mb = health.rss_kb ? (health.rss_kb / 1024).toFixed(1) + " MB" : "N/A";
-    document.getElementById("health-rss").textContent = `${health.os} · ${mb}`;
-    document.getElementById("peers-readout").textContent =
-      `${peers.service} — local ${peers.local.peer_id} (QUIC :${peers.local.quic_port}) · ${peers.discovered.length} on LAN`;
-    const list = document.getElementById("peers-list");
-    list.replaceChildren(
-      ...peers.discovered.map((p) => {
-        const li = document.createElement("li");
-        const name = document.createElement("span");
-        name.textContent = `${p.peer_id} · ${p.os} · ${p.addr}`;
-        const badge = document.createElement("span");
-        badge.className = "badge ok";
-        badge.textContent = `QUIC :${p.quic_port}`;
-        li.append(name, badge);
-        return li;
-      })
-    );
-  } catch (_) {}
-}
-
 document.getElementById("regen-pin-btn").addEventListener("click", loadPairing);
 document.getElementById("save-layout-btn").addEventListener("click", saveTopology);
 document.getElementById("reset-layout-btn").addEventListener("click", loadTopology);
-document.getElementById("transfer-btn").addEventListener("click", runTransferTest);
 
 loadTopology();
 loadPairing();
 loadHealthAndPeers();
-loadDdcBuses();
+pollSession();
 connectSse();
-setInterval(loadHealthAndPeers, 5000);
+setInterval(() => { loadHealthAndPeers(); pollSession(); }, 2500);
