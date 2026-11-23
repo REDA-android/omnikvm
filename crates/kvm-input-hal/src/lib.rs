@@ -1,3 +1,4 @@
+pub mod ddc;
 pub mod linux;
 pub mod macos;
 pub mod mock;

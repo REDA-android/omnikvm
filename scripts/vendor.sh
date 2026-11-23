@@ -38,6 +38,10 @@ declare -A REPOS=(
   ["iroh"]="https://github.com/n0-computer/iroh"
   ["reis"]="https://github.com/ids1024/reis"
   ["axum"]="https://github.com/tokio-rs/axum"
+  ["snow"]="https://github.com/mcginty/snow"
+  ["screenstub"]="https://github.com/arcnmx/screenstub"
+  ["rust-clipboard-ext"]="https://gitlab.com/timvisee/rust-clipboard-ext"
+  ["stickup-rs"]="https://gitlab.com/belegrades/stickup-rs"
 )
 
 echo "==> Starting strategic cloning of ${#REPOS[@]} reference repositories..."
