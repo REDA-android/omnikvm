@@ -11,6 +11,7 @@ members = [
     "crates/kvm-cli",
     "crates/kvm-tray-ui",
 ]
+exclude = ["tauri-app"]
 resolver = "2"
 
 [workspace.package]

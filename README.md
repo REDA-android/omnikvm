@@ -27,11 +27,18 @@ cargo clippy --workspace --all-targets -- -D warnings
 # Build portable static Linux musl + Go release tarball
 bash scripts/package-release.sh
 
-# Launch Control Center UI
-cargo run -p kvm-tray-ui -- --serve 127.0.0.1:8080 --config ~/.omnikvm.json
+# Launch Control Center UI (auto-opens browser on an available local port)
+cargo run -p kvm-tray-ui
+
+# Windows PowerShell quick start
+cargo build --release -p kvm-cli -p kvm-tray-ui
+.\target\release\kvm-tray-ui.exe
+
+# Optional: build standalone Tauri v2 desktop window (Windows/macOS/Linux)
+cd tauri-app && cargo build --release
 
 # Start authenticated QUIC HID receiver (SPAKE2+/TOFU + sealed anti-replay datagrams)
-cargo run -p kvm-cli -- serve --bind 127.0.0.1:4433 --pin 482910 --config ~/.omnikvm.json --mock
+cargo run -p kvm-cli -- serve --bind 0.0.0.0:4433 --pin 482910 --config ~/.omnikvm.json
 
 # Switch monitor input over DDC/CI (dry-run prints MCCS VCP 0x60 frame)
 cargo run -p kvm-cli -- ddc-switch --input hdmi1 --dry-run
