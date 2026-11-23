@@ -1,11 +1,12 @@
+mod live;
+
 use axum::extract::State;
 use axum::http::header;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use kvm_clipboard_sync::streaming::{chunk_bytes_encrypted, ChunkReassembler, DEFAULT_CHUNK_SIZE};
-use kvm_discovery_mdns::{PeerAnnouncement, SERVICE_TYPE};
+use kvm_discovery_mdns::SERVICE_TYPE;
 use kvm_omni_core::config::OmniConfig;
 use kvm_omni_core::crypto::{build_pairing_uri, generate_pairing_pin};
 use kvm_omni_core::topology::ScreenRect;
@@ -13,12 +14,9 @@ use qrcode::render::svg;
 use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
-use tokio_stream::wrappers::IntervalStream;
-use tokio_stream::StreamExt;
+use std::time::Instant;
 
 const INDEX_HTML: &str = include_str!("../../../web/index.html");
 const STYLES_CSS: &str = include_str!("../../../web/styles.css");
@@ -99,11 +97,6 @@ async fn get_pairing() -> impl IntoResponse {
     Json(build_pairing_json())
 }
 
-async fn get_peers() -> impl IntoResponse {
-    let local = PeerAnnouncement::new("omnikvm-tray", "localhost", 4433, 4434, "tofu-local");
-    Json(json!({ "service": SERVICE_TYPE, "local": local }))
-}
-
 async fn get_topology(State(state): State<AppState>) -> impl IntoResponse {
     let list = state.config.read().unwrap().screens.clone();
     Json(list)
@@ -159,24 +152,11 @@ async fn post_transfer_test(Json(req): Json<TransferReq>) -> impl IntoResponse {
     })
 }
 
-async fn sse_events() -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
-    let mut tick = 0u64;
-    let stream = IntervalStream::new(tokio::time::interval(Duration::from_millis(800))).map(move |_| {
-        tick += 1;
-        let rtt_ms = 0.31 + ((tick % 5) as f64) * 0.03;
-        let payload = json!({
-            "tick": tick,
-            "rtt_ms": (rtt_ms * 100.0).round() / 100.0,
-            "transport": "QUIC LAN (quinn)",
-            "active_screen": if tick % 6 < 4 { "Linux-Host-4K" } else { "Win11-Work-FHD" }
-        })
-        .to_string();
-        Ok(Event::default().data(payload))
-    });
-    Sse::new(stream).keep_alive(KeepAlive::default())
+pub fn build_router(config_path: Option<PathBuf>) -> Router {
+    build_router_with_live(config_path, live::LiveState::default())
 }
 
-pub fn build_router(config_path: Option<PathBuf>) -> Router {
+pub fn build_router_with_live(config_path: Option<PathBuf>, live_state: live::LiveState) -> Router {
     let state = AppState::from_path(config_path);
     Router::new()
         .route("/", get(get_index))
@@ -184,11 +164,10 @@ pub fn build_router(config_path: Option<PathBuf>) -> Router {
         .route("/app.js", get(get_js))
         .route("/api/health", get(get_health))
         .route("/api/pairing", get(get_pairing))
-        .route("/api/peers", get(get_peers))
         .route("/api/topology", get(get_topology).post(post_topology))
         .route("/api/transfer-test", post(post_transfer_test))
-        .route("/api/events", get(sse_events))
         .with_state(state)
+        .merge(live::router(live_state))
 }
 
 #[tokio::main]
@@ -203,7 +182,11 @@ async fn main() {
         let addr = args.get(pos + 1).map(String::as_str).unwrap_or("127.0.0.1:8080");
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         println!("OmniKVM Axum Control Center listening on http://{addr}");
-        axum::serve(listener, build_router(config_path)).await.unwrap();
+        let live_state = live::LiveState::default();
+        live::spawn_discovery(live_state.clone(), live::default_discovery_port());
+        axum::serve(listener, build_router_with_live(config_path, live_state))
+            .await
+            .unwrap();
     } else {
         println!("{}", build_pairing_json());
     }
@@ -265,6 +248,9 @@ mod tests {
 
         let pairing = http_get(addr, "/api/pairing").await;
         assert!(pairing.contains("omnikvm://pair") && pairing.contains("<svg"));
+
+        let peers = http_get(addr, "/api/peers").await;
+        assert!(peers.contains("\"discovered\":[]"));
 
         let topo = http_get(addr, "/api/topology").await;
         assert!(topo.contains("Linux-Host-4K") && topo.contains("Win11-Work-FHD"));

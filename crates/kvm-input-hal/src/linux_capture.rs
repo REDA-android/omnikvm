@@ -93,7 +93,7 @@ impl EvdevCapture {
 #[cfg(target_os = "linux")]
 fn set_grab(file: &std::fs::File, on: bool) -> Result<(), HalError> {
     use std::os::unix::io::AsRawFd;
-    const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
+    const EVIOCGRAB: libc::Ioctl = 0x4004_4590;
     // SAFETY: fd valid for the lifetime of `file`; EVIOCGRAB takes an int by value.
     let rc = unsafe { libc::ioctl(file.as_raw_fd(), EVIOCGRAB, libc::c_int::from(on)) };
     if rc < 0 {

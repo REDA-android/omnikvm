@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 pub const DDC_CI_SLAVE_ADDR: u16 = 0x37;
 #[cfg(target_os = "linux")]
-const I2C_SLAVE: libc::c_ulong = 0x0703;
+const I2C_SLAVE: libc::Ioctl = 0x0703;
 
 /// Lists candidate `/dev/i2c-*` buses sorted by bus number.
 pub fn list_i2c_buses() -> Vec<PathBuf> {

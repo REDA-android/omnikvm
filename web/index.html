@@ -43,6 +43,31 @@
           <span class="badge ok" id="rtt-badge">-- ms</span>
         </div>
         <svg id="latency-chart" class="latency-chart" viewBox="0 0 600 90" preserveAspectRatio="none" aria-label="Latency sparkline"></svg>
+        <p class="hint">Measured locally each tick: encode &rarr; Blake3 MAC seal &rarr; anti-replay open &rarr; decode of a real HID frame.</p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Monitor Input Switch (DDC/CI)</h2>
+          <select id="ddc-bus" class="field" aria-label="I2C bus"><option value="">Dry run (no bus)</option></select>
+        </div>
+        <div class="btn-group" id="ddc-buttons">
+          <button type="button" class="btn" data-input="hdmi1">HDMI 1</button>
+          <button type="button" class="btn" data-input="hdmi2">HDMI 2</button>
+          <button type="button" class="btn" data-input="dp1">DP 1</button>
+          <button type="button" class="btn" data-input="dp2">DP 2</button>
+          <button type="button" class="btn" data-input="usbc">USB-C</button>
+        </div>
+        <p class="hint" id="ddc-result">VCP 0x60 Set Feature over /dev/i2c-N (slave 0x37). Pick a bus to apply for real.</p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Clipboard Lab (Semantic &middot; Sealed &middot; OSC 52)</h2>
+          <button id="clip-btn" type="button" class="btn btn-primary">Analyze</button>
+        </div>
+        <textarea id="clip-input" class="field clip-input" rows="3" placeholder="Paste text, HTML or code&hellip;">fn main() { println!("OmniKVM"); }</textarea>
+        <pre class="hint clip-output" id="clip-result">Detects format, seals a Blake3 envelope and builds an SSH/tmux OSC 52 sequence.</pre>
       </section>
     </div>
 
@@ -88,6 +113,7 @@
           <span class="badge ok" id="health-rss">-- MB</span>
         </div>
         <p class="hint" id="peers-readout">Scanning <code>_omnikvm._udp.local.</code>&hellip;</p>
+        <ul class="transport-list" id="peers-list"></ul>
       </section>
     </aside>
   </main>

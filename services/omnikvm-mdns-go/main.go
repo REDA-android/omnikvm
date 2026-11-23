@@ -5,22 +5,29 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"time"
 )
 
 type PeerBeacon struct {
-	PeerID    string `json:"peer_id"`
-	Hostname  string `json:"hostname"`
-	QuicPort  uint16 `json:"quic_port"`
-	Timestamp int64  `json:"timestamp_ms"`
+	PeerID         string `json:"peer_id"`
+	Hostname       string `json:"hostname"`
+	OS             string `json:"os"`
+	QuicPort       uint16 `json:"quic_port"`
+	WebRtcPort     uint16 `json:"webrtc_port"`
+	FingerprintHex string `json:"fingerprint_hex"`
+	Timestamp      int64  `json:"timestamp_ms"`
 }
 
 func BuildBeaconJSON(peerID, hostname string, quicPort uint16) ([]byte, error) {
 	b := PeerBeacon{
-		PeerID:    peerID,
-		Hostname:  hostname,
-		QuicPort:  quicPort,
-		Timestamp: time.Now().UnixMilli(),
+		PeerID:         peerID,
+		Hostname:       hostname,
+		OS:             runtime.GOOS,
+		QuicPort:       quicPort,
+		WebRtcPort:     quicPort + 1,
+		FingerprintHex: "go-mdns-beacon",
+		Timestamp:      time.Now().UnixMilli(),
 	}
 	return json.Marshal(b)
 }

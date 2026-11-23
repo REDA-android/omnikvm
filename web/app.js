@@ -65,7 +65,7 @@ function renderLatencyChart() {
   if (rttHistory.length < 2) return;
   const w = 600;
   const h = 90;
-  const maxRtt = 1.0;
+  const maxRtt = Math.max(10, ...rttHistory) * 1.2;
   const pts = rttHistory
     .map((val, i) => {
       const x = (i / Math.max(1, rttHistory.length - 1)) * (w - 16) + 8;
@@ -116,25 +116,75 @@ function connectSse() {
   const es = new EventSource("/api/events");
   es.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    statusText.textContent = `${msg.transport} · ${msg.rtt_ms} ms`;
-    rttBadge.textContent = `${msg.rtt_ms} ms`;
-    if (msg.active_screen !== focusedId) {
-      focusedId = msg.active_screen;
-      renderScreens();
-    }
-    rttHistory.push(msg.rtt_ms);
+    statusText.textContent = `${msg.transport} · ${msg.peers} peer(s)`;
+    rttBadge.textContent = `${msg.pipeline_us} µs`;
+    if (msg.cursor_locked !== cursorLocked) renderLock(msg.cursor_locked);
+    rttHistory.push(msg.pipeline_us);
     if (rttHistory.length > 40) rttHistory.shift();
     renderLatencyChart();
   };
 }
 
 let cursorLocked = false;
-document.getElementById("lock-cursor-btn").addEventListener("click", (e) => {
-  cursorLocked = !cursorLocked;
-  e.target.textContent = "Lock Cursor: " + (cursorLocked ? "ON" : "OFF");
-  readout.textContent = cursorLocked
-    ? "Cursor locked to active screen (gaming/fullscreen mode)."
+const lockBtn = document.getElementById("lock-cursor-btn");
+function renderLock(locked) {
+  cursorLocked = locked;
+  lockBtn.textContent = "Lock Cursor: " + (locked ? "ON" : "OFF");
+  readout.textContent = locked
+    ? "Cursor locked to active screen (gaming/fullscreen mode). Hotkey: Ctrl+Alt+L."
     : "Cursor edge switching enabled (hysteresis 4px, dead-zone 16px).";
+}
+lockBtn.addEventListener("click", async () => {
+  try {
+    const res = await fetch("/api/cursor-lock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locked: !cursorLocked }),
+    });
+    renderLock((await res.json()).locked);
+  } catch (_) {}
+});
+
+async function loadDdcBuses() {
+  try {
+    const { buses } = await (await fetch("/api/ddc/buses")).json();
+    const sel = document.getElementById("ddc-bus");
+    for (const b of buses) {
+      const o = document.createElement("option");
+      o.value = b;
+      o.textContent = b;
+      sel.appendChild(o);
+    }
+  } catch (_) {}
+}
+document.getElementById("ddc-buttons").addEventListener("click", async (e) => {
+  const input = e.target.dataset && e.target.dataset.input;
+  if (!input) return;
+  const bus = document.getElementById("ddc-bus").value;
+  const out = document.getElementById("ddc-result");
+  const res = await fetch("/api/ddc/switch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input, bus: bus || null, dry_run: !bus }),
+  });
+  const d = await res.json();
+  out.textContent = d.ok
+    ? `${d.input}: frame [${d.frame}] ${d.applied ? "applied on " + bus : "(dry run)"}`
+    : `Error: ${d.error}`;
+});
+
+document.getElementById("clip-btn").addEventListener("click", async () => {
+  const text = document.getElementById("clip-input").value;
+  const res = await fetch("/api/clipboard", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  const d = await res.json();
+  document.getElementById("clip-result").textContent =
+    `Format: ${JSON.stringify(d.format)} · ${d.bytes} B · blake3 ${d.blake3}\n` +
+    `Envelope #${d.transfer_id} ${d.envelope_verified ? "verified" : "FAILED"} · ct ${d.ciphertext_preview}…\n` +
+    `OSC 52: ${d.osc52.slice(0, 120)}${d.osc52.length > 120 ? "…" : ""}`;
 });
 
 async function loadHealthAndPeers() {
@@ -145,7 +195,20 @@ async function loadHealthAndPeers() {
     const mb = health.rss_kb ? (health.rss_kb / 1024).toFixed(1) + " MB" : "N/A";
     document.getElementById("health-rss").textContent = `${health.os} · ${mb}`;
     document.getElementById("peers-readout").textContent =
-      `${peers.service} — local node ${peers.local.peer_id} (QUIC :${peers.local.quic_port})`;
+      `${peers.service} — local ${peers.local.peer_id} (QUIC :${peers.local.quic_port}) · ${peers.discovered.length} on LAN`;
+    const list = document.getElementById("peers-list");
+    list.replaceChildren(
+      ...peers.discovered.map((p) => {
+        const li = document.createElement("li");
+        const name = document.createElement("span");
+        name.textContent = `${p.peer_id} · ${p.os} · ${p.addr}`;
+        const badge = document.createElement("span");
+        badge.className = "badge ok";
+        badge.textContent = `QUIC :${p.quic_port}`;
+        li.append(name, badge);
+        return li;
+      })
+    );
   } catch (_) {}
 }
 
@@ -157,4 +220,6 @@ document.getElementById("transfer-btn").addEventListener("click", runTransferTes
 loadTopology();
 loadPairing();
 loadHealthAndPeers();
+loadDdcBuses();
 connectSse();
+setInterval(loadHealthAndPeers, 5000);
