@@ -1,6 +1,7 @@
 mod daemon;
 #[allow(dead_code)]
 mod router;
+mod secure;
 mod transfer;
 
 use clap::{Parser, Subcommand};
@@ -31,6 +32,11 @@ enum Commands {
         bind: SocketAddr,
         #[arg(long)]
         mock: bool,
+        /// Pairing PIN: enables SPAKE2+/TOFU auth + sealed (MAC/anti-replay) datagrams
+        #[arg(long, env = "OMNIKVM_PIN")]
+        pin: Option<String>,
+        #[arg(long, default_value = "omnikvm.json")]
+        config: std::path::PathBuf,
     },
     /// Connect to a remote OmniKVM peer and send synthetic HID events
     Connect {
@@ -40,6 +46,11 @@ enum Commands {
         dx: i32,
         #[arg(long, default_value_t = 0)]
         dy: i32,
+        /// Pairing PIN shown by the server (`omnikvm pair`)
+        #[arg(long, env = "OMNIKVM_PIN")]
+        pin: Option<String>,
+        #[arg(long, default_value = "omnikvm.json")]
+        config: std::path::PathBuf,
     },
     /// Generate a SPAKE2+ pairing PIN and URI
     Pair {
@@ -90,7 +101,12 @@ async fn main() -> anyhow::Result<()> {
             println!("OS: {}", std::env::consts::OS);
             println!("Linux HAL Backend: {backend:?}");
         }
-        Commands::Serve { bind, mock } => {
+        Commands::Serve {
+            bind,
+            mock,
+            pin,
+            config,
+        } => {
             let injector: Arc<dyn SystemInputInjector> = if mock {
                 Arc::new(MockHal::new())
             } else {
@@ -102,12 +118,38 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             };
-            let (_addr, handle) = daemon::run_server(bind, injector, None).await?;
-            handle.await??;
+            if let Some(pin) = pin {
+                let opts = secure::SecureOpts {
+                    pin,
+                    config_path: config,
+                };
+                let (_addr, handle) = secure::run_secure_server(bind, injector, opts, None).await?;
+                let stats = handle.await??;
+                println!("Secure session stats: {stats:?}");
+            } else {
+                eprintln!("WARN: no --pin given, running UNAUTHENTICATED (LAN test mode)");
+                let (_addr, handle) = daemon::run_server(bind, injector, None).await?;
+                handle.await??;
+            }
         }
-        Commands::Connect { peer, dx, dy } => {
+        Commands::Connect {
+            peer,
+            dx,
+            dy,
+            pin,
+            config,
+        } => {
             let events = vec![InputEvent::MouseMove { dx, dy }];
-            let sent = daemon::send_events_to_peer(peer, &events).await?;
+            let sent = match pin {
+                Some(pin) => {
+                    let opts = secure::SecureOpts {
+                        pin,
+                        config_path: config,
+                    };
+                    secure::send_events_secure(peer, &events, &opts).await?
+                }
+                None => daemon::send_events_to_peer(peer, &events).await?,
+            };
             println!("Sent {sent} HID event(s) over QUIC to {peer}");
         }
         Commands::Pair {

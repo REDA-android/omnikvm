@@ -88,6 +88,13 @@ pub async fn client_handshake(
     .await?;
 
     let chal: ServerChallenge = read_frame(&mut recv).await?;
+    // Bind the claimed fingerprint to the certificate actually presented over TLS,
+    // otherwise a MITM could replay a trusted peer's fingerprint with its own cert.
+    if let Some(tls_fp) = crate::identity::peer_cert_fingerprint(conn) {
+        if tls_fp != chal.cert_fingerprint {
+            return Err(QuicError::Connection("server TLS certificate does not match claimed fingerprint".into()));
+        }
+    }
     keystore
         .verify_or_trust(&chal.peer_id, chal.cert_fingerprint)
         .map_err(|e| QuicError::Connection(e.to_string()))?;

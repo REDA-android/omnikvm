@@ -1,9 +1,10 @@
 pub mod handshake;
+pub mod identity;
 
 use bytes::Bytes;
 use kvm_omni_core::protocol::OmniPacket;
 pub use quinn::Connection;
-use quinn::{ClientConfig, Endpoint, ServerConfig};
+use quinn::{ClientConfig, Endpoint};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
@@ -86,14 +87,8 @@ impl ServerCertVerifier for TofuSkipServerVerification {
 }
 
 pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Endpoint, [u8; 32]), QuicError> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let cert = generate_self_signed_cert(vec!["localhost".into(), "omnikvm.local".into()])?;
-    let fp = cert.fingerprint;
-    let server_config = ServerConfig::with_single_cert(vec![cert.cert_der], cert.key_der)
-        .map_err(|e| QuicError::Endpoint(e.to_string()))?;
-    let endpoint =
-        Endpoint::server(server_config, bind_addr).map_err(|e| QuicError::Endpoint(e.to_string()))?;
-    Ok((endpoint, fp))
+    identity::make_server_endpoint_with_cert(bind_addr, cert)
 }
 
 pub fn make_client_endpoint(bind_addr: SocketAddr) -> Result<Endpoint, QuicError> {

@@ -79,6 +79,17 @@ fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     diff == 0
 }
 
+fn decode_hex32(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 || !s.is_ascii() {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
 #[derive(Debug, Default)]
 pub struct TofuKeystore {
     trusted: HashMap<String, [u8; 32]>,
@@ -87,6 +98,32 @@ pub struct TofuKeystore {
 impl TofuKeystore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Rebuilds a keystore from persisted `peer_id -> hex fingerprint` entries
+    /// (malformed entries are skipped).
+    pub fn from_hex_map(map: &HashMap<String, String>) -> Self {
+        let trusted = map
+            .iter()
+            .filter_map(|(k, v)| decode_hex32(v).map(|fp| (k.clone(), fp)))
+            .collect();
+        Self { trusted }
+    }
+
+    /// Exports trusted fingerprints as lowercase hex for `OmniConfig.trusted_peers`.
+    pub fn to_hex_map(&self) -> HashMap<String, String> {
+        self.trusted
+            .iter()
+            .map(|(k, v)| (k.clone(), v.iter().map(|b| format!("{b:02x}")).collect()))
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.trusted.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.trusted.is_empty()
     }
 
     pub fn verify_or_trust(&mut self, peer_id: &str, fingerprint: [u8; 32]) -> Result<bool, CryptoError> {
@@ -123,5 +160,20 @@ mod tests {
         assert!(ks.verify_or_trust("laptop-1", [9u8; 32]).unwrap());
         assert!(!ks.verify_or_trust("laptop-1", [9u8; 32]).unwrap());
         assert!(ks.verify_or_trust("laptop-1", [8u8; 32]).is_err());
+    }
+
+    #[test]
+    fn tofu_keystore_hex_persistence_roundtrip() {
+        let mut ks = TofuKeystore::new();
+        ks.verify_or_trust("desk-1", [0xAB; 32]).unwrap();
+        let map = ks.to_hex_map();
+        assert_eq!(map["desk-1"].len(), 64);
+        let mut restored = TofuKeystore::from_hex_map(&map);
+        assert_eq!(restored.len(), 1);
+        assert!(!restored.verify_or_trust("desk-1", [0xAB; 32]).unwrap());
+        assert!(restored.verify_or_trust("desk-1", [0xCD; 32]).is_err());
+        let mut junk = map.clone();
+        junk.insert("bad".into(), "zz".into());
+        assert_eq!(TofuKeystore::from_hex_map(&junk).len(), 1);
     }
 }
