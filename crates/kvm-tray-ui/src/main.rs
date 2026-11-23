@@ -6,6 +6,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use kvm_clipboard_sync::streaming::{chunk_bytes_encrypted, ChunkReassembler, DEFAULT_CHUNK_SIZE};
 use kvm_discovery_mdns::{PeerAnnouncement, SERVICE_TYPE};
+use kvm_omni_core::config::OmniConfig;
 use kvm_omni_core::crypto::{build_pairing_uri, generate_pairing_pin};
 use kvm_omni_core::topology::ScreenRect;
 use qrcode::render::svg;
@@ -13,6 +14,7 @@ use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio_stream::wrappers::IntervalStream;
@@ -24,38 +26,19 @@ const APP_JS: &str = include_str!("../../../web/app.js");
 
 #[derive(Clone)]
 struct AppState {
-    screens: Arc<RwLock<Vec<ScreenRect>>>,
+    config: Arc<RwLock<OmniConfig>>,
+    config_path: Option<PathBuf>,
 }
 
-impl Default for AppState {
-    fn default() -> Self {
+impl AppState {
+    fn from_path(path: Option<PathBuf>) -> Self {
+        let cfg = path
+            .as_deref()
+            .and_then(|p| OmniConfig::load_or_default(p).ok())
+            .unwrap_or_default();
         Self {
-            screens: Arc::new(RwLock::new(vec![
-                ScreenRect {
-                    id: "Linux-Host-4K".into(),
-                    x: 0,
-                    y: 0,
-                    width: 3840,
-                    height: 2160,
-                    dpi_scale: 2.0,
-                },
-                ScreenRect {
-                    id: "Win11-Work-FHD".into(),
-                    x: 3840,
-                    y: 540,
-                    width: 1920,
-                    height: 1080,
-                    dpi_scale: 1.0,
-                },
-                ScreenRect {
-                    id: "Android-Tablet".into(),
-                    x: 5760,
-                    y: 680,
-                    width: 1200,
-                    height: 800,
-                    dpi_scale: 2.0,
-                },
-            ])),
+            config: Arc::new(RwLock::new(cfg)),
+            config_path: path,
         }
     }
 }
@@ -79,6 +62,15 @@ pub fn build_pairing_json() -> serde_json::Value {
     })
 }
 
+fn current_rss_kb() -> Option<usize> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find(|l| l.starts_with("VmRSS:"))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|v| v.parse::<usize>().ok())
+}
+
 async fn get_index() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], INDEX_HTML)
 }
@@ -94,6 +86,15 @@ async fn get_js() -> impl IntoResponse {
     )
 }
 
+async fn get_health() -> impl IntoResponse {
+    Json(json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "os": std::env::consts::OS,
+        "rss_kb": current_rss_kb(),
+    }))
+}
+
 async fn get_pairing() -> impl IntoResponse {
     Json(build_pairing_json())
 }
@@ -104,7 +105,7 @@ async fn get_peers() -> impl IntoResponse {
 }
 
 async fn get_topology(State(state): State<AppState>) -> impl IntoResponse {
-    let list = state.screens.read().unwrap().clone();
+    let list = state.config.read().unwrap().screens.clone();
     Json(list)
 }
 
@@ -112,8 +113,15 @@ async fn post_topology(
     State(state): State<AppState>,
     Json(updated): Json<Vec<ScreenRect>>,
 ) -> impl IntoResponse {
-    *state.screens.write().unwrap() = updated.clone();
-    Json(json!({ "saved": updated.len() }))
+    let persisted = {
+        let mut guard = state.config.write().unwrap();
+        guard.screens = updated.clone();
+        state
+            .config_path
+            .as_deref()
+            .is_some_and(|p| guard.save(p).is_ok())
+    };
+    Json(json!({ "saved": updated.len(), "persisted": persisted }))
 }
 
 #[derive(Deserialize)]
@@ -168,12 +176,13 @@ async fn sse_events() -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infa
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-pub fn build_router() -> Router {
-    let state = AppState::default();
+pub fn build_router(config_path: Option<PathBuf>) -> Router {
+    let state = AppState::from_path(config_path);
     Router::new()
         .route("/", get(get_index))
         .route("/styles.css", get(get_css))
         .route("/app.js", get(get_js))
+        .route("/api/health", get(get_health))
         .route("/api/pairing", get(get_pairing))
         .route("/api/peers", get(get_peers))
         .route("/api/topology", get(get_topology).post(post_topology))
@@ -185,11 +194,16 @@ pub fn build_router() -> Router {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let config_path = args
+        .iter()
+        .position(|a| a == "--config")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
     if let Some(pos) = args.iter().position(|a| a == "--serve") {
         let addr = args.get(pos + 1).map(String::as_str).unwrap_or("127.0.0.1:8080");
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         println!("OmniKVM Axum Control Center listening on http://{addr}");
-        axum::serve(listener, build_router()).await.unwrap();
+        axum::serve(listener, build_router(config_path)).await.unwrap();
     } else {
         println!("{}", build_pairing_json());
     }
@@ -206,24 +220,17 @@ mod tests {
         assert!(INDEX_HTML.contains("OmniKVM Control Plane"));
         assert!(STYLES_CSS.contains("--accent"));
         assert!(APP_JS.contains("topology-stage"));
-        let _router = build_router();
+        let _router = build_router(None);
     }
 
     #[test]
     fn memory_footprint_under_15mb() {
-        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-            if let Some(rss_kb) = status
-                .lines()
-                .find(|l| l.starts_with("VmRSS:"))
-                .and_then(|l| l.split_whitespace().nth(1))
-                .and_then(|v| v.parse::<usize>().ok())
-            {
-                assert!(
-                    rss_kb < 15 * 1024,
-                    "RSS too high: {} KB (limit 15360 KB)",
-                    rss_kb
-                );
-            }
+        if let Some(rss_kb) = current_rss_kb() {
+            assert!(
+                rss_kb < 15 * 1024,
+                "RSS too high: {} KB (limit 15360 KB)",
+                rss_kb
+            );
         }
     }
 
@@ -231,10 +238,14 @@ mod tests {
     async fn axum_control_center_http_endpoints_work() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+        let cfg_path = std::env::temp_dir().join("omnikvm_ui_cfg_test.json");
+        let _ = std::fs::remove_file(&cfg_path);
+
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let path_clone = cfg_path.clone();
         let server = tokio::spawn(async move {
-            let _ = axum::serve(listener, build_router()).await;
+            let _ = axum::serve(listener, build_router(Some(path_clone))).await;
         });
 
         async fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
@@ -246,6 +257,9 @@ mod tests {
             String::from_utf8_lossy(&buf).into_owned()
         }
 
+        let health = http_get(addr, "/api/health").await;
+        assert!(health.contains("\"status\":\"ok\""));
+
         let html = http_get(addr, "/").await;
         assert!(html.contains("200 OK") && html.contains("OmniKVM Control Plane"));
 
@@ -256,5 +270,6 @@ mod tests {
         assert!(topo.contains("Linux-Host-4K") && topo.contains("Win11-Work-FHD"));
 
         server.abort();
+        let _ = std::fs::remove_file(&cfg_path);
     }
 }
