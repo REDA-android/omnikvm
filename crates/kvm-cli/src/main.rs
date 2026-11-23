@@ -6,6 +6,7 @@ mod tools;
 mod transfer;
 
 use clap::{Parser, Subcommand};
+#[cfg(not(any(windows, target_os = "macos")))]
 use kvm_input_hal::linux::detect_session_backend;
 #[cfg(not(windows))]
 use kvm_input_hal::linux::UinputDevice;
@@ -131,10 +132,14 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Status => {
-            let backend = detect_session_backend();
             println!("OmniKVM v{}", env!("CARGO_PKG_VERSION"));
             println!("OS: {}", std::env::consts::OS);
-            println!("Linux HAL Backend: {backend:?}");
+            #[cfg(windows)]
+            println!("HAL Backend: Win32SendInput / LowLevelHook");
+            #[cfg(target_os = "macos")]
+            println!("HAL Backend: CoreGraphics");
+            #[cfg(not(any(windows, target_os = "macos")))]
+            println!("HAL Backend: {:?}", detect_session_backend());
         }
         Commands::Serve {
             bind,
