@@ -1,5 +1,6 @@
 /target
 /vendor_refs
+/dist
 **/*.rs.bk
 *.bin
 *.iso
