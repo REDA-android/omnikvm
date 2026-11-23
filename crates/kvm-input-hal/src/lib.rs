@@ -1,7 +1,9 @@
 pub mod linux;
 pub mod macos;
 pub mod mock;
+pub mod wayland;
 pub mod windows;
+pub mod x11;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

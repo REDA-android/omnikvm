@@ -28,6 +28,7 @@
         <div class="panel-head">
           <h2>Virtual Screen Topology (Drag &amp; Drop)</h2>
           <div class="btn-group">
+            <button id="lock-cursor-btn" type="button" class="btn">Lock Cursor: OFF</button>
             <button id="save-layout-btn" type="button" class="btn btn-primary">Save Topology</button>
             <button id="reset-layout-btn" type="button" class="btn">Reset</button>
           </div>
@@ -79,6 +80,14 @@
           <li><span>Fallback: WebRTC DataChannel</span><span class="badge">&lt; 50 ms</span></li>
           <li><span>Mobile / Dongle: BLE &amp; ESP32-S3</span><span class="badge">HID</span></li>
         </ul>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>System Health &amp; mDNS</h2>
+          <span class="badge ok" id="health-rss">-- MB</span>
+        </div>
+        <p class="hint" id="peers-readout">Scanning <code>_omnikvm._udp.local.</code>&hellip;</p>
       </section>
     </aside>
   </main>

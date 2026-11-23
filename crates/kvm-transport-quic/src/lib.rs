@@ -1,3 +1,5 @@
+pub mod handshake;
+
 use bytes::Bytes;
 use kvm_omni_core::protocol::OmniPacket;
 pub use quinn::Connection;

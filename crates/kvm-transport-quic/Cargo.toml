@@ -8,9 +8,12 @@ license.workspace = true
 [dependencies]
 kvm-omni-core = { path = "../kvm-omni-core" }
 blake3.workspace = true
+bincode.workspace = true
 quinn.workspace = true
 rustls.workspace = true
 rcgen.workspace = true
+rand.workspace = true
+serde.workspace = true
 tokio.workspace = true
 bytes.workspace = true
 thiserror.workspace = true

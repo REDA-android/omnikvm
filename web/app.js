@@ -128,6 +128,27 @@ function connectSse() {
   };
 }
 
+let cursorLocked = false;
+document.getElementById("lock-cursor-btn").addEventListener("click", (e) => {
+  cursorLocked = !cursorLocked;
+  e.target.textContent = "Lock Cursor: " + (cursorLocked ? "ON" : "OFF");
+  readout.textContent = cursorLocked
+    ? "Cursor locked to active screen (gaming/fullscreen mode)."
+    : "Cursor edge switching enabled (hysteresis 4px, dead-zone 16px).";
+});
+
+async function loadHealthAndPeers() {
+  try {
+    const [hRes, pRes] = await Promise.all([fetch("/api/health"), fetch("/api/peers")]);
+    const health = await hRes.json();
+    const peers = await pRes.json();
+    const mb = health.rss_kb ? (health.rss_kb / 1024).toFixed(1) + " MB" : "N/A";
+    document.getElementById("health-rss").textContent = `${health.os} · ${mb}`;
+    document.getElementById("peers-readout").textContent =
+      `${peers.service} — local node ${peers.local.peer_id} (QUIC :${peers.local.quic_port})`;
+  } catch (_) {}
+}
+
 document.getElementById("regen-pin-btn").addEventListener("click", loadPairing);
 document.getElementById("save-layout-btn").addEventListener("click", saveTopology);
 document.getElementById("reset-layout-btn").addEventListener("click", loadTopology);
@@ -135,4 +156,5 @@ document.getElementById("transfer-btn").addEventListener("click", runTransferTes
 
 loadTopology();
 loadPairing();
+loadHealthAndPeers();
 connectSse();

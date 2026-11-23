@@ -810,12 +810,15 @@ dependencies = [
 name = "kvm-transport-quic"
 version = "1.0.0"
 dependencies = [
+ "bincode",
  "blake3",
  "bytes",
  "kvm-omni-core",
  "quinn",
+ "rand 0.8.8",
  "rcgen",
  "rustls",
+ "serde",
  "thiserror 1.0.69",
  "tokio",
 ]
