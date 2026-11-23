@@ -170,35 +170,57 @@ pub fn build_router_with_live(config_path: Option<PathBuf>, live_state: live::Li
         .merge(live::router(live_state))
 }
 
+fn open_in_browser(url: &str) {
+    #[cfg(windows)]
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--print-pairing") {
+        println!("{}", build_pairing_json());
+        return;
+    }
     let config_path = args
         .iter()
         .position(|a| a == "--config")
         .and_then(|i| args.get(i + 1))
-        .map(PathBuf::from);
-    if let Some(pos) = args.iter().position(|a| a == "--serve") {
-        let addr = args.get(pos + 1).map(String::as_str).unwrap_or("127.0.0.1:18080");
-        let listener = match tokio::net::TcpListener::bind(addr).await {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("WARN: cannot bind {addr} ({e}); falling back to an available local port...");
-                tokio::net::TcpListener::bind("127.0.0.1:0")
-                    .await
-                    .expect("failed to bind fallback localhost port")
-            }
-        };
-        let actual = listener.local_addr().unwrap();
-        println!("OmniKVM Axum Control Center listening on http://{actual}");
-        let live_state = live::LiveState::default();
-        live::spawn_discovery(live_state.clone(), live::default_discovery_port());
-        axum::serve(listener, build_router_with_live(config_path, live_state))
-            .await
-            .unwrap();
-    } else {
-        println!("{}", build_pairing_json());
+        .map(PathBuf::from)
+        .or_else(|| Some(PathBuf::from("omnikvm.json")));
+    let addr = args
+        .iter()
+        .position(|a| a == "--serve")
+        .and_then(|pos| args.get(pos + 1))
+        .filter(|v| !v.starts_with("--"))
+        .map(String::as_str)
+        .unwrap_or("127.0.0.1:18080");
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("WARN: cannot bind {addr} ({e}); falling back to an available local port...");
+            tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("failed to bind fallback localhost port")
+        }
+    };
+    let actual = listener.local_addr().unwrap();
+    let url = format!("http://{actual}");
+    println!("OmniKVM Control Center listening on {url}");
+    if !args.iter().any(|a| a == "--no-open") {
+        open_in_browser(&url);
     }
+    let live_state = live::LiveState::default();
+    live::spawn_discovery(live_state.clone(), live::default_discovery_port());
+    axum::serve(listener, build_router_with_live(config_path, live_state))
+        .await
+        .unwrap();
 }
 
 #[cfg(test)]
